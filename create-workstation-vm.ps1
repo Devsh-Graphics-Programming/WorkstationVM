@@ -42,6 +42,9 @@ function IsoFromDir($sourceDir, $isoPath, $label) {
 function WindowsIso($cfg, $cacheDir) {
     if (-not [string]::IsNullOrWhiteSpace($cfg.windowsIsoPath)) { return FullPath $cfg.windowsIsoPath }
 
+    $iso = Join-Path $cacheDir "windows11.iso"
+    if (Test-Path $iso) { return $iso }
+
     $fido = Join-Path $PSScriptRoot "vendor\Fido.ps1"
     if (-not (Test-Path $fido)) { throw "Missing vendor\Fido.ps1." }
 
@@ -58,10 +61,7 @@ function WindowsIso($cfg, $cacheDir) {
     $url = & powershell.exe @args | Where-Object { $_ -match '^https://.+\.iso(\?|$)' } | Select-Object -First 1
     if (-not $url) { throw "Could not resolve Windows ISO URL." }
 
-    $iso = Join-Path $cacheDir "windows11.iso"
-    if (-not (Test-Path $iso)) {
-        Invoke-WebRequest -Uri $url -OutFile $iso
-    }
+    Invoke-WebRequest -Uri $url -OutFile $iso
     return $iso
 }
 
