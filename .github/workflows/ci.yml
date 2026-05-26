@@ -86,7 +86,7 @@ jobs:
           $cfg.switchName = "workstation-ci"
           $cfg.baseDir = "$env:RUNNER_TEMP/workstation-vm/windows11"
           $cfg.imageCacheDir = "$env:RUNNER_TEMP/workstation-image-cache/windows"
-          $cfg.memoryGB = 4
+          $cfg.memoryGB = 2
           $cfg.cpuCount = 2
           $cfg.recreate = $true
           $cfg.createCheckpoint = $false

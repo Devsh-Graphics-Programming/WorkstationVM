@@ -48,12 +48,19 @@ Check the VM:
 .\check-workstation-vm.ps1 --config config\windows.json
 ```
 
+## RDP
+
+The VM enables the RDP server, Remote Desktop firewall rules and RDP access for the workstation user during first login.
+
+If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](https://github.com/Upinel/BetterRDP) and applying its `.reg` file. It tunes the RDP experience by enabling GPU/RemoteFX policies, 60 FPS capture/DWM settings, AVC444/hardware encode preference, image quality, latency and bandwidth-related registry settings. This is optional and is not vendored here.
+
 ## What It Does
 
 - Downloads a Windows 11 ISO if `windowsIsoPath` is empty.
 - Creates a Generation 2 Hyper-V VM.
 - Installs Windows with an unattended local admin account.
 - Installs VS Code, Git and WireGuard on first login through `winget`.
+- Enables the RDP server during first login.
 - Creates a `clean-ready` checkpoint before work credentials or VPN profiles are added.
 
 ## Important Settings

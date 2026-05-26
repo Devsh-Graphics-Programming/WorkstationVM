@@ -5,6 +5,24 @@ $log = Join-Path $root "bootstrap.log"
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 Start-Transcript -Path $log -Append | Out-Null
 
+function EnableRemoteDesktop {
+    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Type DWord -Value 0
+    Set-Service -Name TermService -StartupType Automatic
+    Start-Service -Name TermService
+
+    Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -Name "RemoteDesktop-UserMode-In-TCP", "RemoteDesktop-UserMode-In-UDP" -Enabled True -ErrorAction SilentlyContinue
+
+    try {
+        $group = ([Security.Principal.SecurityIdentifier]"S-1-5-32-555").Translate([Security.Principal.NTAccount]).Value.Split("\")[-1]
+        Add-LocalGroupMember -Group $group -Member $env:USERNAME -ErrorAction SilentlyContinue
+    } catch {
+        "Remote Desktop user setup failed: $_" | Out-File -FilePath $log -Append
+    }
+}
+
+EnableRemoteDesktop
+
 $media = Get-PSDrive -PSProvider FileSystem |
     Where-Object { Test-Path (Join-Path $_.Root "packages.txt") } |
     Select-Object -First 1
