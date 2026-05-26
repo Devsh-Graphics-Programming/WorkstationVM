@@ -279,6 +279,42 @@ function Clear-VirtualDiskHostAttributes {
     fsutil.exe sparse setflag $resolvedPath 0 | Out-Null
 }
 
+function New-UbuntuNetworkConfig {
+    param([hashtable]$Config)
+
+    if (-not $Config.ContainsKey("UbuntuStaticAddress") -or [string]::IsNullOrWhiteSpace([string]$Config.UbuntuStaticAddress)) {
+        return ""
+    }
+
+    $gateway = [string]$Config.UbuntuGateway
+    if ([string]::IsNullOrWhiteSpace($gateway)) {
+        throw "UbuntuGateway must be set when UbuntuStaticAddress is set."
+    }
+
+    $dnsServers = @($Config.UbuntuDnsServers) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+    if ($dnsServers.Count -eq 0) {
+        $dnsServers = @($gateway)
+    }
+    $dnsYaml = ($dnsServers | ForEach-Object { "        - $_" }) -join "`n"
+
+    @"
+version: 2
+ethernets:
+  primary:
+    match:
+      name: "e*"
+    dhcp4: false
+    addresses:
+      - $($Config.UbuntuStaticAddress)
+    routes:
+      - to: default
+        via: $gateway
+    nameservers:
+      addresses:
+$dnsYaml
+"@
+}
+
 function Ensure-UbuntuSshKey {
     param([hashtable]$Config)
 
@@ -381,6 +417,10 @@ final_message: "Ubuntu smoke workstation VM is ready after cloud-init. Uptime: `
 
         Set-Content -LiteralPath (Join-Path $seedDir "meta-data") -Value $metaData -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $seedDir "user-data") -Value $userData -Encoding ASCII
+        $networkConfig = New-UbuntuNetworkConfig -Config $Config
+        if (-not [string]::IsNullOrWhiteSpace($networkConfig)) {
+            Set-Content -LiteralPath (Join-Path $seedDir "network-config") -Value $networkConfig -Encoding ASCII
+        }
         New-IsoFromDirectory -SourceDir $seedDir -IsoPath $Config.Paths.SeedIsoPath -Label "cidata"
         return
     }
@@ -535,6 +575,10 @@ final_message: "Ubuntu workstation VM is ready after cloud-init. Uptime: `$UPTIM
 
     Set-Content -LiteralPath (Join-Path $seedDir "meta-data") -Value $metaData -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $seedDir "user-data") -Value $userData -Encoding ASCII
+    $networkConfig = New-UbuntuNetworkConfig -Config $Config
+    if (-not [string]::IsNullOrWhiteSpace($networkConfig)) {
+        Set-Content -LiteralPath (Join-Path $seedDir "network-config") -Value $networkConfig -Encoding ASCII
+    }
     New-IsoFromDirectory -SourceDir $seedDir -IsoPath $Config.Paths.SeedIsoPath -Label "cidata"
 }
 

@@ -116,18 +116,28 @@ jobs:
           Import-Module Hyper-V -ErrorAction Stop
           Get-Command New-VM -ErrorAction Stop | Out-Host
 
-          $switch = Get-VMSwitch -Name "Default Switch" -ErrorAction SilentlyContinue
+          $switchName = "workstation-ci"
+          $switch = Get-VMSwitch -Name $switchName -ErrorAction SilentlyContinue
           if (-not $switch) {
-              $switch = Get-VMSwitch -Name "nat" -ErrorAction SilentlyContinue
+              $switch = New-VMSwitch -Name $switchName -SwitchType Internal
           }
-          if (-not $switch) {
-              $switch = Get-VMSwitch | Select-Object -First 1
+
+          $adapter = Get-NetAdapter -Name "vEthernet ($switchName)" -ErrorAction Stop
+          $hostIp = "192.168.250.1"
+          $subnet = "192.168.250.0/24"
+          $existingAddress = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+              Where-Object { $_.IPAddress -eq $hostIp }
+          if (-not $existingAddress) {
+              New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $hostIp -PrefixLength 24 | Out-Host
           }
-          if (-not $switch) {
-              $switch = New-VMSwitch -Name "ci-internal" -SwitchType Internal
+
+          $natName = "workstation-ci-nat"
+          if (-not (Get-NetNat -Name $natName -ErrorAction SilentlyContinue)) {
+              New-NetNat -Name $natName -InternalIPInterfaceAddressPrefix $subnet | Out-Host
           }
 
           "SWITCH_NAME=$($switch.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "UBUNTU_SSH_HOST=192.168.250.10" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Get-VMSwitch | Format-Table -AutoSize | Out-Host
 
       - name: Create VM
@@ -164,6 +174,12 @@ jobs:
         if: matrix.variant == 'Ubuntu'
         run: |
           $ErrorActionPreference = "Stop"
+          if (-not [string]::IsNullOrWhiteSpace($env:UBUNTU_SSH_HOST)) {
+              "SSH_HOST=$env:UBUNTU_SSH_HOST" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              Write-Host "Ubuntu SSH target: $env:UBUNTU_SSH_HOST"
+              return
+          }
+
           $deadline = (Get-Date).AddMinutes(20)
           $ip = $null
           while ((Get-Date) -lt $deadline -and -not $ip) {
