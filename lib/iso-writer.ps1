@@ -2,7 +2,9 @@ function New-AnswerIso {
     param(
         [Parameter(Mandatory = $true)][string]$SourceDir,
         [Parameter(Mandatory = $true)][string]$IsoPath,
-        [string]$VolumeName = "AUTOUNATTEND"
+        [string]$VolumeName = "AUTOUNATTEND",
+        [string]$OverlayDir = "",
+        [string]$BootImagePath = ""
     )
 
     if (-not ("WorkstationIsoWriter" -as [type])) {
@@ -10,7 +12,6 @@ function New-AnswerIso {
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
 
 [ComImport]
 [Guid("0000000C-0000-0000-C000-000000000046")]
@@ -26,19 +27,50 @@ public interface IStreamNative
     void Revert();
     void LockRegion(long libOffset, long cb, int dwLockType);
     void UnlockRegion(long libOffset, long cb, int dwLockType);
-    void Stat(out STATSTG pstatstg, int grfStatFlag);
+    void Stat(out System.Runtime.InteropServices.ComTypes.STATSTG pstatstg, int grfStatFlag);
     void Clone(out IStreamNative ppstm);
 }
 
 public static class WorkstationIsoWriter
 {
-    public static void Write(string sourceDir, string outputPath, string volumeName)
+    private const uint STGM_READ = 0x00000000;
+    private const uint STGM_SHARE_DENY_WRITE = 0x00000020;
+
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    private static extern void SHCreateStreamOnFileEx(
+        string fileName,
+        uint mode,
+        uint attributes,
+        bool create,
+        IStreamNative template,
+        out IStreamNative stream);
+
+    public static void Write(string sourceDir, string overlayDir, string outputPath, string volumeName, string bootImagePath)
     {
         Type imageType = Type.GetTypeFromProgID("IMAPI2FS.MsftFileSystemImage", true);
         dynamic image = Activator.CreateInstance(imageType);
-        image.FileSystemsToCreate = 3;
+        image.FileSystemsToCreate = String.IsNullOrWhiteSpace(bootImagePath) ? 3 : 4;
+        image.FreeMediaBlocks = 25000000;
         image.VolumeName = volumeName;
         image.Root.AddTree(sourceDir, false);
+        if (!String.IsNullOrWhiteSpace(overlayDir))
+        {
+            image.Root.AddTree(overlayDir, false);
+        }
+
+        if (!String.IsNullOrWhiteSpace(bootImagePath))
+        {
+            Type bootType = Type.GetTypeFromProgID("IMAPI2FS.BootOptions", true);
+            dynamic boot = Activator.CreateInstance(bootType);
+            boot.Manufacturer = "Microsoft";
+            boot.PlatformId = 0xef;
+            boot.Emulation = 0;
+
+            IStreamNative bootStream;
+            SHCreateStreamOnFileEx(bootImagePath, STGM_READ | STGM_SHARE_DENY_WRITE, 0, false, null, out bootStream);
+            boot.AssignBootImage(bootStream);
+            image.BootImageOptions = boot;
+        }
 
         dynamic result = image.CreateResultImage();
         object imageStream = result.ImageStream;
@@ -46,7 +78,7 @@ public static class WorkstationIsoWriter
         try
         {
             IStreamNative stream = (IStreamNative)Marshal.GetTypedObjectForIUnknown(unknown, typeof(IStreamNative));
-            STATSTG stat;
+            System.Runtime.InteropServices.ComTypes.STATSTG stat;
             stream.Stat(out stat, 1);
             stream.Seek(0, 0, IntPtr.Zero);
 
@@ -83,11 +115,25 @@ public static class WorkstationIsoWriter
     }
 
     $source = (Resolve-Path -LiteralPath $SourceDir).Path
+    $overlay = if ([string]::IsNullOrWhiteSpace($OverlayDir)) { "" } else { (Resolve-Path -LiteralPath $OverlayDir).Path }
+    $bootImage = if ([string]::IsNullOrWhiteSpace($BootImagePath)) { "" } else { (Resolve-Path -LiteralPath $BootImagePath).Path }
     $iso = [IO.Path]::GetFullPath($IsoPath)
     $parent = [IO.Path]::GetDirectoryName($iso)
     if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
 
-    [WorkstationIsoWriter]::Write($source, $iso, $VolumeName)
+    [WorkstationIsoWriter]::Write($source, $overlay, $iso, $VolumeName, $bootImage)
     if (-not (Test-Path -LiteralPath $iso)) { throw "ISO creation failed: $iso" }
     return $iso
+}
+
+function New-InstallIso {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDir,
+        [Parameter(Mandatory = $true)][string]$IsoPath,
+        [Parameter(Mandatory = $true)][string]$BootImagePath,
+        [string]$OverlayDir = "",
+        [string]$VolumeName = "WORKSTATION"
+    )
+
+    New-AnswerIso -SourceDir $SourceDir -IsoPath $IsoPath -BootImagePath $BootImagePath -OverlayDir $OverlayDir -VolumeName $VolumeName
 }

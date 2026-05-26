@@ -35,10 +35,6 @@ function RemoveVm($name) {
     }
 }
 
-function IsoFromDir($sourceDir, $isoPath, $label) {
-    New-AnswerIso -SourceDir $sourceDir -IsoPath $isoPath -VolumeName $label | Out-Null
-}
-
 function WindowsIso($cfg, $cacheDir) {
     if (-not [string]::IsNullOrWhiteSpace($cfg.windowsIsoPath)) { return FullPath $cfg.windowsIsoPath }
 
@@ -65,9 +61,9 @@ function WindowsIso($cfg, $cacheDir) {
     return $iso
 }
 
-function AnswerIso($cfg, $baseDir) {
+function InstallMedia($cfg, $baseDir, $windowsIso) {
     $dir = Join-Path $baseDir "answer"
-    $iso = Join-Path $baseDir "$($cfg.vmName)-answer.iso"
+    $installIso = Join-Path $baseDir "$($cfg.vmName)-install.iso"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
     $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
@@ -80,8 +76,47 @@ function AnswerIso($cfg, $baseDir) {
     $xml = $xml.Replace("{{PASSWORD}}", (Xml $cfg.password))
     $xml = $xml.Replace("{{WINDOWS_IMAGE_NAME}}", (Xml $cfg.windowsImageName))
     Set-Content -LiteralPath (Join-Path $dir "Autounattend.xml") -Value $xml -Encoding UTF8
-    IsoFromDir $dir $iso "AUTOUNATTEND"
-    return $iso
+
+    $mounted = Mount-DiskImage -ImagePath $windowsIso -PassThru
+    try {
+        $volume = $mounted | Get-Volume
+        $source = "$($volume.DriveLetter):\"
+        $bootImage = Join-Path $source "efi\microsoft\boot\efisys_noprompt.bin"
+        if (-not (Test-Path $bootImage)) { $bootImage = Join-Path $source "efi\microsoft\boot\efisys.bin" }
+        New-InstallIso -SourceDir $source -OverlayDir $dir -IsoPath $installIso -BootImagePath $bootImage -VolumeName "WORKSTATION" | Out-Null
+    } finally {
+        Dismount-DiskImage -ImagePath $windowsIso | Out-Null
+    }
+
+    [pscustomobject]@{
+        InstallIso = $installIso
+    }
+}
+
+function WaitForReady($cfg) {
+    $password = ConvertTo-SecureString $cfg.password -AsPlainText -Force
+    $credential = [pscredential]::new($cfg.user, $password)
+    $deadline = (Get-Date).AddMinutes(90)
+
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $state = Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
+                $rdp = (Get-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server").fDenyTSConnections -eq 0
+                [pscustomobject]@{
+                    ComputerName = $env:COMPUTERNAME
+                    BootstrapDone = Test-Path "C:\WorkstationVM\bootstrap.done"
+                    RdpEnabled = $rdp
+                }
+            } -ErrorAction Stop
+
+            if ($state.BootstrapDone -and $state.RdpEnabled) { return $state }
+        } catch {
+        }
+
+        Start-Sleep -Seconds 30
+    }
+
+    throw "VM did not become ready within 90 minutes."
 }
 
 $configPath = ArgValue "config"
@@ -101,8 +136,6 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     cpuCount = 4
     diskGB = 100
     recreate = $false
-    createCheckpoint = $false
-    checkpointName = "clean-ready"
     wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard")
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
 
@@ -127,7 +160,7 @@ if ([bool]$cfg.recreate) {
 Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value "User: $($cfg.user)`nPassword: $($cfg.password)`n"
 
 $windowsIso = WindowsIso $cfg $cacheDir
-$answerIso = AnswerIso $cfg $baseDir
+$media = InstallMedia $cfg $baseDir $windowsIso
 
 New-VHD -Path $vhd -SizeBytes ([int64]$cfg.diskGB * 1GB) -Dynamic | Out-Null
 New-VM -Name $cfg.vmName -Generation 2 -MemoryStartupBytes ([int64]$cfg.memoryGB * 1GB) -VHDPath $vhd -SwitchName $cfg.switchName | Out-Null
@@ -138,13 +171,10 @@ Set-VM -Name $cfg.vmName -AutomaticCheckpointsEnabled $false -CheckpointType Sta
 Set-VMKeyProtector -VMName $cfg.vmName -NewLocalKeyProtector
 Enable-VMTPM -VMName $cfg.vmName
 
-$bootDvd = Add-VMDvdDrive -VMName $cfg.vmName -Path $windowsIso -Passthru
-Add-VMDvdDrive -VMName $cfg.vmName -Path $answerIso | Out-Null
+$bootDvd = Add-VMDvdDrive -VMName $cfg.vmName -Path $media.InstallIso -Passthru
 Set-VMFirmware -VMName $cfg.vmName -FirstBootDevice $bootDvd
 Start-VM -Name $cfg.vmName
 
-if ([bool]$cfg.createCheckpoint) {
-    Checkpoint-VM -Name $cfg.vmName -SnapshotName $cfg.checkpointName | Out-Null
-}
-
+$ready = WaitForReady $cfg
 Get-VM -Name $cfg.vmName | Select-Object Name, State, ProcessorCount, MemoryAssigned
+Write-Host "Guest ready: $($ready.ComputerName)"

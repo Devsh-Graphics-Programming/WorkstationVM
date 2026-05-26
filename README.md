@@ -68,12 +68,12 @@ If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](
 ## What It Does
 
 - Downloads a Windows 11 ISO if `windowsIsoPath` is empty.
-- Creates the unattended answer ISO with built-in Windows APIs.
+- Creates a bootable unattended Windows install ISO with built-in Windows APIs.
 - Creates a Generation 2 Hyper-V VM.
 - Installs Windows with an unattended local admin account.
 - Installs VS Code, Git and WireGuard on first login through `winget`.
 - Enables the RDP server during first login.
-- Creates a `clean-ready` checkpoint before work credentials or VPN profiles are added.
+- Waits until the guest finishes bootstrap and is ready to use.
 
 ## Important Settings
 
@@ -83,3 +83,4 @@ If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](
 - Host traffic is separate from VM traffic. The VM gets its own NATed network path.
 - Secure Boot and TPM are enabled.
 - Dynamic memory and automatic checkpoints are disabled.
+- No checkpoints are created by default.

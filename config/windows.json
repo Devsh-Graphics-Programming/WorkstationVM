@@ -9,8 +9,6 @@
   "cpuCount": 4,
   "diskGB": 64,
   "recreate": false,
-  "createCheckpoint": true,
-  "checkpointName": "clean-ready",
   "windowsIsoPath": "",
   "windowsRelease": "Latest",
   "windowsEdition": "Windows 11 Home/Pro/Edu",

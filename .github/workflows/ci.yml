@@ -63,10 +63,9 @@ jobs:
           $cfg.switchName = "workstation-ci"
           $cfg.baseDir = "$env:RUNNER_TEMP/workstation-vm/windows11"
           $cfg.imageCacheDir = "$env:RUNNER_TEMP/workstation-image-cache/windows"
-          $cfg.memoryGB = 2
+          $cfg.memoryGB = 4
           $cfg.cpuCount = 2
           $cfg.recreate = $true
-          $cfg.createCheckpoint = $false
           $cfg.wingetPackages = @()
           $cfg | ConvertTo-Json -Depth 5 | Set-Content config/windows.json
 
