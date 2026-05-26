@@ -409,7 +409,7 @@ package_update: false
 package_upgrade: false
 runcmd:
   - [ systemctl, enable, --now, ssh ]
-  - [ bash, -lc, "printf 'PasswordAuthentication no\nPermitRootLogin no\nAllowUsers $($Config.VMUser)\n' >/etc/ssh/sshd_config.d/90-local-hardening.conf" ]
+  - [ bash, -lc, "mkdir -p /etc/ssh/sshd_config.d && printf 'PasswordAuthentication no\nPermitRootLogin no\nAllowUsers $($Config.VMUser)\n' >/etc/ssh/sshd_config.d/90-local-hardening.conf" ]
   - [ systemctl, restart, ssh ]
   - [ bash, -lc, "mkdir -p /home/$($Config.VMUser)/Work && chown -R $($Config.VMUser):$($Config.VMUser) /home/$($Config.VMUser)/Work" ]
 final_message: "Ubuntu smoke workstation VM is ready after cloud-init. Uptime: `$UPTIME"
@@ -555,7 +555,7 @@ write_files:
       exec microsoft-edge-stable --new-window $workAppUrls
 runcmd:
   - [ systemctl, enable, --now, ssh ]
-  - [ bash, -lc, "printf 'PasswordAuthentication no\nPermitRootLogin no\nAllowUsers $($Config.VMUser)\n' >/etc/ssh/sshd_config.d/90-local-hardening.conf" ]
+  - [ bash, -lc, "mkdir -p /etc/ssh/sshd_config.d && printf 'PasswordAuthentication no\nPermitRootLogin no\nAllowUsers $($Config.VMUser)\n' >/etc/ssh/sshd_config.d/90-local-hardening.conf" ]
   - [ systemctl, restart, ssh ]
   - [ bash, -lc, "echo xfce4-session > /home/$($Config.VMUser)/.xsession && chown $($Config.VMUser):$($Config.VMUser) /home/$($Config.VMUser)/.xsession" ]
   - [ bash, -lc, "groupadd -f nopasswdlogin && usermod -aG nopasswdlogin $($Config.VMUser)" ]

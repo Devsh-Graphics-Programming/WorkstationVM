@@ -184,7 +184,8 @@ set +e
 user="$1"
 echo "hostname=$(hostname)"
 echo "nproc=$(nproc)"
-awk '/MemTotal/ {print "mem_kib="$2}' /proc/meminfo
+mem_kib=$(grep -m1 '^MemTotal:' /proc/meminfo | tr -s ' ' | cut -d' ' -f2)
+echo "mem_kib=$mem_kib"
 echo "ssh_service=$(systemctl is-active ssh 2>/dev/null)"
 echo "lightdm_service=$(systemctl is-active lightdm 2>/dev/null)"
 echo "xrdp_package_count=$(dpkg-query -W -f='${binary:Package}\n' xrdp xorgxrdp 2>/dev/null | wc -l)"
