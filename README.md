@@ -28,8 +28,10 @@ Run from normal PowerShell:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\create-workstation-vm.ps1 --config config\windows11.json
+.\create-workstation-vm.ps1 --config config\windows.json
 ```
+
+Edit `config\windows.json` first if you want a different VM name, RAM, CPU count, disk size or install path.
 
 The generated login is written to:
 
@@ -40,7 +42,7 @@ $HOME\VMs\WorkstationWindows11\credentials.txt
 Check the VM:
 
 ```powershell
-.\check-workstation-vm.ps1 --config config\windows11.json
+.\check-workstation-vm.ps1 --config config\windows.json
 ```
 
 ## What It Does

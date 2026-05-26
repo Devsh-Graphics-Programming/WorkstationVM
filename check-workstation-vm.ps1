@@ -16,7 +16,7 @@ function FullPath($path) {
 
 $configPath = ArgValue "config"
 if ([string]::IsNullOrWhiteSpace($configPath)) {
-    throw "Usage: .\check-workstation-vm.ps1 --config config\windows11.json"
+    throw "Usage: .\check-workstation-vm.ps1 --config config\windows.json"
 }
 
 $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json

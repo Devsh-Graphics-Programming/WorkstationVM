@@ -57,10 +57,8 @@ function IsoFromDir($sourceDir, $isoPath, $label) {
 function WindowsIso($cfg, $cacheDir) {
     if (-not [string]::IsNullOrWhiteSpace($cfg.windowsIsoPath)) { return FullPath $cfg.windowsIsoPath }
 
-    $fido = Join-Path $cacheDir "Fido.ps1"
-    if (-not (Test-Path $fido)) {
-        Invoke-WebRequest -Uri $cfg.fidoUrl -OutFile $fido
-    }
+    $fido = Join-Path $PSScriptRoot "vendor\Fido.ps1"
+    if (-not (Test-Path $fido)) { throw "Missing vendor\Fido.ps1." }
 
     $args = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -103,7 +101,7 @@ function AnswerIso($cfg, $baseDir) {
 
 $configPath = ArgValue "config"
 if ([string]::IsNullOrWhiteSpace($configPath)) {
-    throw "Usage: .\create-workstation-vm.ps1 --config config\windows11.json"
+    throw "Usage: .\create-workstation-vm.ps1 --config config\windows.json"
 }
 
 $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json

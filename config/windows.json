@@ -7,7 +7,7 @@
   "imageCacheDir": "~/VMs/_image-cache/windows",
   "memoryGB": 8,
   "cpuCount": 4,
-  "diskGB": 100,
+  "diskGB": 64,
   "recreate": true,
   "createCheckpoint": true,
   "checkpointName": "clean-ready",
@@ -17,7 +17,6 @@
   "windowsLanguage": "English International",
   "windowsArch": "x64",
   "windowsImageName": "Windows 11 Pro",
-  "fidoUrl": "https://raw.githubusercontent.com/pbatard/Fido/master/Fido.ps1",
   "wingetPackages": [
     "Microsoft.VisualStudioCode",
     "Git.Git",

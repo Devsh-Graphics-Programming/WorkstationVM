@@ -16,7 +16,7 @@ jobs:
       - name: Parse scripts and config
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1")) {
+          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "vendor/Fido.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
@@ -25,6 +25,7 @@ jobs:
           Get-ChildItem config -Filter *.json | ForEach-Object {
             Get-Content -Raw $_.FullName | ConvertFrom-Json | Out-Null
           }
+          if ((Get-ChildItem config -Filter *.json).Count -ne 1) { throw "Expected one config file." }
 
   smoke:
     needs: static
@@ -72,16 +73,30 @@ jobs:
             New-VMSwitch -Name "workstation-ci" -SwitchType Internal | Out-Null
           }
 
+      - name: Prepare CI config
+        run: |
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          $cfg.vmName = "ci-Windows11"
+          $cfg.password = "Workstation123!"
+          $cfg.switchName = "workstation-ci"
+          $cfg.baseDir = "$env:RUNNER_TEMP/workstation-vm/windows11"
+          $cfg.imageCacheDir = "$env:RUNNER_TEMP/workstation-image-cache/windows"
+          $cfg.memoryGB = 4
+          $cfg.cpuCount = 2
+          $cfg.createCheckpoint = $false
+          $cfg.wingetPackages = @()
+          $cfg | ConvertTo-Json -Depth 5 | Set-Content config/windows.json
+
       - name: Create VM
-        run: .\create-workstation-vm.ps1 --config config/ci-windows11.json
+        run: .\create-workstation-vm.ps1 --config config/windows.json
 
       - name: Check VM
-        run: .\check-workstation-vm.ps1 --config config/ci-windows11.json
+        run: .\check-workstation-vm.ps1 --config config/windows.json
 
       - name: Collect state
         if: always()
         run: |
-          $cfg = Get-Content -Raw config/ci-windows11.json | ConvertFrom-Json
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
           Get-VM -Name $cfg.vmName -ErrorAction SilentlyContinue | Format-List * | Out-File "$env:RUNNER_TEMP\vm-state.txt"
 
       - uses: actions/upload-artifact@v4
@@ -94,6 +109,6 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          $cfg = Get-Content -Raw config/ci-windows11.json | ConvertFrom-Json
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
           Stop-VM -Name $cfg.vmName -TurnOff -Force -ErrorAction SilentlyContinue
           Remove-VM -Name $cfg.vmName -Force -ErrorAction SilentlyContinue
