@@ -1,0 +1,243 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse PowerShell files
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(
+              "create-workstation-vm.ps1",
+              "verify-workstation-vm.ps1"
+          )
+
+          foreach ($file in $files) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors.Count -gt 0) {
+                  $errors | Format-List | Out-String | Write-Error
+                  throw "PowerShell parse failed: $file"
+              }
+          }
+
+      - name: Import config files
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem -Path config -Filter *.psd1 | ForEach-Object {
+              Import-PowerShellDataFile -Path $_.FullName | Out-Null
+          }
+
+  vm-smoke:
+    name: VM smoke (${{ matrix.variant }})
+    runs-on: windows-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    needs: static
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: Ubuntu
+            memory_gb: 4
+            vhd_gb: 32
+            cpu_count: 2
+            timeout_minutes: 90
+          - variant: Windows11
+            memory_gb: 4
+            vhd_gb: 64
+            cpu_count: 2
+            timeout_minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore image cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\workstation-image-cache
+          key: workstation-vm-${{ runner.os }}-${{ matrix.variant }}-v1
+          restore-keys: |
+            workstation-vm-${{ runner.os }}-${{ matrix.variant }}-
+
+      - name: Install host dependencies
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install qemu windows-adk-oscdimg -y --no-progress
+
+          $toolDirs = @(
+              "$env:ProgramFiles\qemu",
+              "${env:ProgramFiles(x86)}\qemu",
+              "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg",
+              "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\AMD64\Oscdimg",
+              "$env:ProgramFiles\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg",
+              "$env:ProgramFiles\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\AMD64\Oscdimg",
+              "$env:ChocolateyInstall\bin"
+          ) | Where-Object { $_ -and (Test-Path $_) }
+
+          $oscdimg = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits", "$env:ProgramFiles\Windows Kits" -Filter oscdimg.exe -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          if ($oscdimg) {
+              $toolDirs += $oscdimg.DirectoryName
+          }
+
+          foreach ($dir in $toolDirs) {
+              $env:Path = "$dir;$env:Path"
+              $dir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
+          Get-Command qemu-img -ErrorAction Stop | Out-Host
+          Get-Command oscdimg -ErrorAction Stop | Out-Host
+
+      - name: Prepare Hyper-V
+        run: |
+          $ErrorActionPreference = "Stop"
+          $feature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -ErrorAction SilentlyContinue
+          if ($feature -and $feature.State -ne "Enabled") {
+              Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart
+          }
+
+          Import-Module Hyper-V -ErrorAction Stop
+          Get-Command New-VM -ErrorAction Stop | Out-Host
+
+          $switch = Get-VMSwitch -Name "Default Switch" -ErrorAction SilentlyContinue
+          if (-not $switch) {
+              $switch = Get-VMSwitch -Name "nat" -ErrorAction SilentlyContinue
+          }
+          if (-not $switch) {
+              $switch = Get-VMSwitch | Select-Object -First 1
+          }
+          if (-not $switch) {
+              $switch = New-VMSwitch -Name "ci-internal" -SwitchType Internal
+          }
+
+          "SWITCH_NAME=$($switch.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-VMSwitch | Format-Table -AutoSize | Out-Host
+
+      - name: Create VM
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vmName = "ci-${{ matrix.variant }}-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $baseDir = Join-Path $env:RUNNER_TEMP "workstation-vm\$vmName"
+          $imageCache = Join-Path $env:RUNNER_TEMP "workstation-image-cache"
+          New-Item -ItemType Directory -Force -Path $baseDir, $imageCache | Out-Null
+
+          "VM_NAME=$vmName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VM_BASE_DIR=$baseDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "IMAGE_CACHE=$imageCache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          $log = Join-Path $env:RUNNER_TEMP "create-${{ matrix.variant }}.log"
+          Start-Transcript -Path $log
+          try {
+              .\create-workstation-vm.ps1 `
+                  -Variant "${{ matrix.variant }}" `
+                  -LocalConfigPath ".\config\ci.psd1" `
+                  -VMName $vmName `
+                  -BaseDir $baseDir `
+                  -SwitchName $env:SWITCH_NAME `
+                  -ImageCacheRoot $imageCache `
+                  -ProvisioningProfile Smoke `
+                  -MemoryStartupBytes ([int64]${{ matrix.memory_gb }} * 1GB) `
+                  -VhdSizeBytes ([int64]${{ matrix.vhd_gb }} * 1GB) `
+                  -CpuCount ${{ matrix.cpu_count }}
+          } finally {
+              Stop-Transcript
+          }
+
+      - name: Resolve Ubuntu SSH target
+        if: matrix.variant == 'Ubuntu'
+        run: |
+          $ErrorActionPreference = "Stop"
+          $deadline = (Get-Date).AddMinutes(20)
+          $ip = $null
+          while ((Get-Date) -lt $deadline -and -not $ip) {
+              $addresses = (Get-VMNetworkAdapter -VMName $env:VM_NAME).IPAddresses
+              $ip = $addresses |
+                  Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notlike '169.254.*' } |
+                  Select-Object -First 1
+              if (-not $ip) {
+                  Start-Sleep -Seconds 10
+              }
+          }
+          if (-not $ip) {
+              throw "Could not resolve Ubuntu VM IPv4 address."
+          }
+          "SSH_HOST=$ip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Ubuntu SSH target: $ip"
+
+      - name: Verify VM
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:RUNNER_TEMP "verify-${{ matrix.variant }}.log"
+          Start-Transcript -Path $log
+          try {
+              $params = @{
+                  Variant = "${{ matrix.variant }}"
+                  LocalConfigPath = ".\config\ci.psd1"
+                  VMName = $env:VM_NAME
+                  ExpectedSwitchName = $env:SWITCH_NAME
+                  ExpectedCpuCount = ${{ matrix.cpu_count }}
+                  ExpectedMemoryGiB = ${{ matrix.memory_gb }}
+                  ProvisioningProfile = "Smoke"
+                  TimeoutMinutes = 90
+              }
+              if ("${{ matrix.variant }}" -eq "Ubuntu") {
+                  $params.SshHost = $env:SSH_HOST
+              }
+              .\verify-workstation-vm.ps1 @params
+          } finally {
+              Stop-Transcript
+          }
+
+      - name: Collect VM state
+        if: always()
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = Join-Path $env:RUNNER_TEMP "state-${{ matrix.variant }}.txt"
+          "VM: $env:VM_NAME" | Set-Content -Path $out
+          Get-VM -Name $env:VM_NAME -ErrorAction SilentlyContinue | Format-List * | Out-String | Add-Content -Path $out
+          Get-VMNetworkAdapter -VMName $env:VM_NAME -ErrorAction SilentlyContinue | Format-List * | Out-String | Add-Content -Path $out
+          Get-VMSnapshot -VMName $env:VM_NAME -ErrorAction SilentlyContinue | Format-List * | Out-String | Add-Content -Path $out
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-smoke-${{ matrix.variant }}-logs
+          path: |
+            ${{ runner.temp }}\create-${{ matrix.variant }}.log
+            ${{ runner.temp }}\verify-${{ matrix.variant }}.log
+            ${{ runner.temp }}\state-${{ matrix.variant }}.txt
+          if-no-files-found: ignore
+
+      - name: Cleanup VM
+        if: always()
+        run: |
+          $ErrorActionPreference = "Continue"
+          if ($env:VM_NAME) {
+              $vm = Get-VM -Name $env:VM_NAME -ErrorAction SilentlyContinue
+              if ($vm) {
+                  Stop-VM -Name $env:VM_NAME -TurnOff -Force -ErrorAction SilentlyContinue
+                  Remove-VM -Name $env:VM_NAME -Force -ErrorAction SilentlyContinue
+              }
+              Remove-Item -LiteralPath ".\$env:VM_NAME`_password.txt" -Force -ErrorAction SilentlyContinue
+          }
+          if ($env:VM_BASE_DIR -and (Test-Path $env:VM_BASE_DIR)) {
+              Remove-Item -LiteralPath $env:VM_BASE_DIR -Recurse -Force -ErrorAction SilentlyContinue
+          }

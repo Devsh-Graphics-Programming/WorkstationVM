@@ -1,0 +1,7 @@
+*password*
+*secret*
+*.env
+*.key
+*.pem
+config/local.psd1
+tmp/
