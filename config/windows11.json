@@ -17,5 +17,10 @@
   "windowsLanguage": "English International",
   "windowsArch": "x64",
   "windowsImageName": "Windows 11 Pro",
-  "fidoUrl": "https://raw.githubusercontent.com/pbatard/Fido/master/Fido.ps1"
+  "fidoUrl": "https://raw.githubusercontent.com/pbatard/Fido/master/Fido.ps1",
+  "wingetPackages": [
+    "Microsoft.VisualStudioCode",
+    "Git.Git",
+    "WireGuard.WireGuard"
+  ]
 }

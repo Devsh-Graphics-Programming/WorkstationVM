@@ -74,6 +74,10 @@ function AnswerIso($cfg, $baseDir) {
     $iso = Join-Path $baseDir "$($cfg.vmName)-answer.iso"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
+    $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    Set-Content -LiteralPath (Join-Path $dir "packages.txt") -Value $packages -Encoding UTF8
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "bootstrap-windows.ps1") -Destination $dir -Force
+
     $xml = Get-Content -Raw (Join-Path $PSScriptRoot "templates\windows11-autounattend.xml")
     $xml = $xml.Replace("{{VM_NAME}}", (Xml $cfg.vmName))
     $xml = $xml.Replace("{{USER}}", (Xml $cfg.user))
@@ -103,6 +107,7 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     recreate = $true
     createCheckpoint = $false
     checkpointName = "clean-ready"
+    wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard")
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
 
 if ([string]::IsNullOrWhiteSpace($cfg.password)) { $cfg.password = Password }

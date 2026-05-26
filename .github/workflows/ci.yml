@@ -16,7 +16,7 @@ jobs:
       - name: Parse scripts and config
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($file in @("create-workstation-vm.ps1", "check-workstation-vm.ps1")) {
+          foreach ($file in @("create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null

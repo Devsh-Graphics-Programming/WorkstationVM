@@ -42,6 +42,7 @@
       <AutoLogon><Password><Value>{{PASSWORD}}</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>999</LogonCount><Username>{{USER}}</Username></AutoLogon>
       <OOBE><HideEULAPage>true</HideEULAPage><HideLocalAccountScreen>true</HideLocalAccountScreen><HideOEMRegistrationScreen>true</HideOEMRegistrationScreen><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><NetworkLocation>Work</NetworkLocation><ProtectYourPC>3</ProtectYourPC></OOBE>
       <UserAccounts><LocalAccounts><LocalAccount wcm:action="add"><Password><Value>{{PASSWORD}}</Value><PlainText>true</PlainText></Password><DisplayName>{{USER}}</DisplayName><Group>Administrators</Group><Name>{{USER}}</Name></LocalAccount></LocalAccounts></UserAccounts>
+      <FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Install workstation tools</Description><CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$d=(Get-PSDrive -PSProvider FileSystem | Where-Object { Test-Path (Join-Path $_.Root 'bootstrap-windows.ps1') } | Select-Object -First 1).Root; if ($d) { &amp; powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $d 'bootstrap-windows.ps1') }"</CommandLine></SynchronousCommand></FirstLogonCommands>
       <RegisteredOwner>{{USER}}</RegisteredOwner>
     </component>
   </settings>
