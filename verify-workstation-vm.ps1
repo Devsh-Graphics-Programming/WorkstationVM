@@ -181,7 +181,7 @@ if ($vm -and $vm.State -eq "Running" -and $config.Variant -eq "Ubuntu") {
     if ($tcp) {
         $remoteScript = @'
 set +e
-user="$1"
+user="$(id -un)"
 echo "hostname=$(hostname)"
 echo "nproc=$(nproc)"
 mem_kib=$(grep -m1 '^MemTotal:' /proc/meminfo | tr -s ' ' | cut -d' ' -f2)
@@ -229,7 +229,7 @@ echo "work_dir=$?"
         $remoteOutput = ""
         $sshExit = 255
         while ((Get-Date) -lt $deadline) {
-            $remoteOutput = $remoteScript | & ssh @sshOptions $sshTarget "bash -s -- '$($config.VMUser)'" 2>&1
+            $remoteOutput = $remoteScript | & ssh @sshOptions $sshTarget "bash -s" 2>&1
             $sshExit = $LASTEXITCODE
             if ($sshExit -eq 0) {
                 break
