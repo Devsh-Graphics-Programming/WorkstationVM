@@ -160,6 +160,11 @@ if ($vm -and $vm.State -eq "Running" -and $config.Variant -eq "Ubuntu") {
     }
 
     Add-Check "SSH host resolved" (-not [string]::IsNullOrWhiteSpace($tcpHost)) ("{0} -> {1}" -f $SshHost, $tcpHost)
+    $sshTarget = $SshHost
+    if ($sshTarget -notmatch "@" -and -not [string]::IsNullOrWhiteSpace([string]$config.VMUser)) {
+        $sshTarget = "{0}@{1}" -f $config.VMUser, $SshHost
+    }
+
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $tcp = $false
     while ((Get-Date) -lt $deadline) {
@@ -215,9 +220,9 @@ echo "work_dir=$?"
 '@
 
         $sshOptions = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new")
-        $remoteOutput = $remoteScript | & ssh @sshOptions $SshHost "bash -s -- '$($config.VMUser)'" 2>&1
+        $remoteOutput = $remoteScript | & ssh @sshOptions $sshTarget "bash -s -- '$($config.VMUser)'" 2>&1
         $sshExit = $LASTEXITCODE
-        Add-Check "SSH command execution" ($sshExit -eq 0) ("ExitCode={0}" -f $sshExit)
+        Add-Check "SSH command execution" ($sshExit -eq 0) ("Target={0}; ExitCode={1}" -f $sshTarget, $sshExit)
 
         if ($sshExit -eq 0) {
             $remote = @{}
