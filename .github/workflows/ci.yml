@@ -51,20 +51,25 @@ jobs:
           path: ${{ runner.temp }}\oscdimg-cache
           key: workstation-vm-${{ runner.os }}-oscdimg-v1
 
-      - name: Install host tools
+      - name: Use host tool cache
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cache = "$env:RUNNER_TEMP\oscdimg-cache"
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          $cache | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Prepare host
+        run: .\prepare-host.ps1
+
+      - name: Save host tool cache
         run: |
           $ErrorActionPreference = "Stop"
           $cache = "$env:RUNNER_TEMP\oscdimg-cache"
           $cached = Join-Path $cache "oscdimg.exe"
-          if (-not (Test-Path $cached)) {
-            choco install windows-adk-oscdimg -y --no-progress
-            if ($LASTEXITCODE -ne 0) { throw "windows-adk-oscdimg install failed." }
-            $installed = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits" -Recurse -Filter oscdimg.exe | Select-Object -First 1
-            if (-not $installed) { throw "oscdimg.exe not found after install." }
-            New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          $installed = Get-Command oscdimg.exe -ErrorAction SilentlyContinue
+          if ((-not (Test-Path $cached)) -and $installed) {
             Copy-Item -LiteralPath $installed.FullName -Destination $cached -Force
           }
-          $cache | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Prepare Hyper-V network
         run: |
