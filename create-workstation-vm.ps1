@@ -34,10 +34,23 @@ function RemoveVm($name) {
     }
 }
 
-function IsoFromDir($sourceDir, $isoPath, $label) {
+function Oscdimg {
     $tool = Get-Command oscdimg.exe -ErrorAction SilentlyContinue
-    if (-not $tool) { throw "Missing oscdimg.exe. Install Windows ADK Deployment Tools." }
-    & $tool.Source -n -m -o "-l$label" $sourceDir $isoPath | Out-Null
+    if ($tool) { return $tool.Source }
+
+    $roots = @(
+        "${env:ProgramFiles(x86)}\Windows Kits",
+        "$env:ProgramFiles\Windows Kits"
+    ) | Where-Object { Test-Path $_ }
+
+    Get-ChildItem -Path $roots -Recurse -Filter oscdimg.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+
+function IsoFromDir($sourceDir, $isoPath, $label) {
+    $tool = Oscdimg
+    if (-not $tool) { throw "Missing oscdimg.exe. Run .\prepare-host.ps1 as Administrator once." }
+    & $tool -n -m -o "-l$label" $sourceDir $isoPath | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "oscdimg failed" }
 }
 

@@ -4,13 +4,26 @@ Minimal Windows 11 Hyper-V workstation VM setup.
 
 ## Requirements
 
-- Windows host with Hyper-V enabled.
-- PowerShell running as Administrator.
+- Windows host with Hyper-V support.
 - Virtualization enabled in BIOS/UEFI.
-- Internet access for Windows ISO and first-login tool install.
-- `oscdimg.exe` from Windows ADK Deployment Tools available in `PATH`.
+- Internet access for Windows ISO and tool install.
+
+## Prepare Host
+
+Run once from PowerShell as Administrator:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\prepare-host.ps1
+```
+
+This enables Hyper-V, adds the current user to `Hyper-V Administrators` and installs Windows ADK Deployment Tools if needed.
+
+If the script asks for it, restart Windows or sign out and back in.
 
 ## Run
+
+Run from normal PowerShell:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
