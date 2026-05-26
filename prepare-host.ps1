@@ -9,7 +9,7 @@ function EnableFeature($name) {
     $feature = Get-WindowsOptionalFeature -Online -FeatureName $name
     if ($feature.State -ne "Enabled") {
         Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart | Out-Null
-        $script:restartNeeded = $true
+        $script:featureChanged = $true
     }
 }
 
@@ -31,7 +31,21 @@ function Oscdimg {
         Select-Object -First 1 -ExpandProperty FullName
 }
 
-$restartNeeded = $false
+function InstallAdkDeploymentTools {
+    if (Oscdimg) { return }
+
+    $dir = Join-Path $env:TEMP "WorkstationVM"
+    $setup = Join-Path $dir "adksetup.exe"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+    Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2289980" -OutFile $setup
+    $process = Start-Process -FilePath $setup -ArgumentList "/quiet", "/norestart", "/features", "OptionId.DeploymentTools" -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Windows ADK install failed with exit code $($process.ExitCode)." }
+    if (-not (Oscdimg)) { throw "Windows ADK installed, but oscdimg.exe was not found." }
+}
+
+$featureChanged = $false
+$groupChanged = $false
 
 EnableFeature "Microsoft-Hyper-V-All"
 & bcdedit.exe /set hypervisorlaunchtype auto | Out-Null
@@ -41,24 +55,19 @@ $members = Get-LocalGroupMember -Group $group -ErrorAction SilentlyContinue |
     ForEach-Object { $_.Name.ToLowerInvariant() }
 if ($members -notcontains $User.ToLowerInvariant()) {
     Add-LocalGroupMember -Group $group -Member $User
-    $restartNeeded = $true
+    $groupChanged = $true
 }
 
-if (-not (Oscdimg)) {
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        throw "winget.exe is required to install Windows ADK Deployment Tools."
-    }
-
-    & winget.exe install --id Microsoft.WindowsADK --exact --silent --accept-package-agreements --accept-source-agreements --override "/quiet /features OptionId.DeploymentTools"
-    if ($LASTEXITCODE -ne 0) { throw "Windows ADK install failed." }
-}
+InstallAdkDeploymentTools
 
 if (-not (Get-VMSwitch -Name "Default Switch" -ErrorAction SilentlyContinue)) {
-    $restartNeeded = $true
+    $featureChanged = $true
 }
 
-if ($restartNeeded) {
-    "Host prepared. Restart Windows or sign out and back in before creating the VM."
+if ($featureChanged) {
+    "Host prepared. Restart Windows before creating the VM."
+} elseif ($groupChanged) {
+    "Host prepared. Sign out and back in, then use normal PowerShell."
 } else {
-    "Host is ready."
+    "Host is ready. Use normal PowerShell to create the VM."
 }

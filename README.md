@@ -19,7 +19,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 This enables Hyper-V, adds the current user to `Hyper-V Administrators` and installs Windows ADK Deployment Tools if needed.
 
-If the script asks for it, restart Windows or sign out and back in.
+If Hyper-V was just enabled, restart Windows.
+If only group membership changed, sign out and back in.
 
 ## Run
 
