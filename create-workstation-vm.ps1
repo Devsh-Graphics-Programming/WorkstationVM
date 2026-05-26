@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"; $scriptArgs = $args
+. (Join-Path $PSScriptRoot "lib\iso-writer.ps1")
 
 function ArgValue($name) {
     for ($i = 0; $i -lt $scriptArgs.Count; $i++) {
@@ -34,24 +35,8 @@ function RemoveVm($name) {
     }
 }
 
-function Oscdimg {
-    $tool = Get-Command oscdimg.exe -ErrorAction SilentlyContinue
-    if ($tool) { return $tool.Source }
-
-    $roots = @(
-        "${env:ProgramFiles(x86)}\Windows Kits",
-        "$env:ProgramFiles\Windows Kits"
-    ) | Where-Object { Test-Path $_ }
-
-    Get-ChildItem -Path $roots -Recurse -Filter oscdimg.exe -ErrorAction SilentlyContinue |
-        Select-Object -First 1 -ExpandProperty FullName
-}
-
 function IsoFromDir($sourceDir, $isoPath, $label) {
-    $tool = Oscdimg
-    if (-not $tool) { throw "Missing oscdimg.exe. Run .\prepare-host.ps1 as Administrator once." }
-    & $tool -n -m -o "-l$label" $sourceDir $isoPath | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "oscdimg failed" }
+    New-AnswerIso -SourceDir $sourceDir -IsoPath $isoPath -VolumeName $label | Out-Null
 }
 
 function WindowsIso($cfg, $cacheDir) {

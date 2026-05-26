@@ -33,7 +33,7 @@ function EnableFeature($name) {
     }
     if ($feature.State -ne "Enabled") {
         Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart | Out-Null
-        $script:featureChanged = $true
+        $script:restartNeeded = $true
     }
 }
 
@@ -42,33 +42,7 @@ function HyperVGroup {
     $sid.Translate([Security.Principal.NTAccount]).Value.Split("\")[-1]
 }
 
-function Oscdimg {
-    $tool = Get-Command oscdimg.exe -ErrorAction SilentlyContinue
-    if ($tool) { return $tool.Source }
-
-    $roots = @(
-        "${env:ProgramFiles(x86)}\Windows Kits",
-        "$env:ProgramFiles\Windows Kits"
-    ) | Where-Object { Test-Path $_ }
-
-    Get-ChildItem -Path $roots -Recurse -Filter oscdimg.exe -ErrorAction SilentlyContinue |
-        Select-Object -First 1 -ExpandProperty FullName
-}
-
-function InstallAdkDeploymentTools {
-    if (Oscdimg) { return }
-
-    $dir = Join-Path $env:TEMP "WorkstationVM"
-    $setup = Join-Path $dir "adksetup.exe"
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-
-    Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2289980" -OutFile $setup
-    $process = Start-Process -FilePath $setup -ArgumentList "/quiet", "/norestart", "/features", "OptionId.DeploymentTools" -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Windows ADK install failed with exit code $($process.ExitCode)." }
-    if (-not (Oscdimg)) { throw "Windows ADK installed, but oscdimg.exe was not found." }
-}
-
-$featureChanged = $false
+$restartNeeded = $false
 $groupChanged = $false
 
 AssertFirmwareVirtualization
@@ -83,13 +57,7 @@ if ($members -notcontains $User.ToLowerInvariant()) {
     $groupChanged = $true
 }
 
-InstallAdkDeploymentTools
-
-if (-not (Get-VMSwitch -Name "Default Switch" -ErrorAction SilentlyContinue)) {
-    $featureChanged = $true
-}
-
-if ($featureChanged) {
+if ($restartNeeded) {
     "Host prepared. Restart Windows before creating the VM."
 } elseif ($groupChanged) {
     "Host prepared. Sign out and back in, then use normal PowerShell."

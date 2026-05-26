@@ -6,9 +6,7 @@ Minimal Windows 11 Hyper-V workstation VM setup.
 
 - Windows host with Hyper-V support.
 - Virtualization enabled in BIOS/UEFI.
-- Internet access for Windows ISO and tool install.
-
-`prepare-host.ps1` checks BIOS/UEFI virtualization and stops with a clear error if it is disabled.
+- Internet access for Windows ISO download.
 
 ## Prepare Host
 
@@ -18,7 +16,7 @@ Run once from PowerShell as Administrator:
 Set-ExecutionPolicy -Scope Process Bypass; .\prepare-host.ps1
 ```
 
-This enables Hyper-V, adds the current user to `Hyper-V Administrators` and installs Windows ADK Deployment Tools if needed.
+This validates BIOS/UEFI virtualization setup, enables Hyper-V and adds the current user to `Hyper-V Administrators`.
 
 After it finishes, close the Administrator PowerShell window. Open a new PowerShell session without Administrator privileges.
 
@@ -70,6 +68,7 @@ If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](
 ## What It Does
 
 - Downloads a Windows 11 ISO if `windowsIsoPath` is empty.
+- Creates the unattended answer ISO with built-in Windows APIs.
 - Creates a Generation 2 Hyper-V VM.
 - Installs Windows with an unattended local admin account.
 - Installs VS Code, Git and WireGuard on first login through `winget`.
