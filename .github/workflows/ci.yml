@@ -51,10 +51,11 @@ jobs:
         shell: pwsh
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - variant: Ubuntu
-            memory_gb: 4
+            memory_gb: 2
             vhd_gb: 32
             cpu_count: 2
             timeout_minutes: 90
