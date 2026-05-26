@@ -8,7 +8,7 @@
   "memoryGB": 8,
   "cpuCount": 4,
   "diskGB": 64,
-  "recreate": true,
+  "recreate": false,
   "createCheckpoint": true,
   "checkpointName": "clean-ready",
   "windowsIsoPath": "",

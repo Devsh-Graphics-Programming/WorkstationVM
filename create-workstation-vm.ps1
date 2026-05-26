@@ -115,7 +115,7 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     memoryGB = 8
     cpuCount = 4
     diskGB = 100
-    recreate = $true
+    recreate = $false
     createCheckpoint = $false
     checkpointName = "clean-ready"
     wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard")
@@ -129,10 +129,17 @@ $vmDir = Join-Path $baseDir "vm"
 $vhd = Join-Path $vmDir "$($cfg.vmName).vhdx"
 
 New-Item -ItemType Directory -Force -Path $baseDir, $cacheDir, $vmDir | Out-Null
-Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value "User: $($cfg.user)`nPassword: $($cfg.password)`n"
 
-if ([bool]$cfg.recreate) { RemoveVm $cfg.vmName }
-if (Test-Path $vhd) { Remove-Item -LiteralPath $vhd -Force }
+$existingVm = Get-VM -Name $cfg.vmName -ErrorAction SilentlyContinue
+$existingDisk = Test-Path $vhd
+if ([bool]$cfg.recreate) {
+    RemoveVm $cfg.vmName
+    if ($existingDisk) { Remove-Item -LiteralPath $vhd -Force }
+} elseif ($existingVm -or $existingDisk) {
+    throw "VM or disk already exists. Set recreate to true only when you intentionally want to replace it."
+}
+
+Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value "User: $($cfg.user)`nPassword: $($cfg.password)`n"
 
 $windowsIso = WindowsIso $cfg $cacheDir
 $answerIso = AnswerIso $cfg $baseDir

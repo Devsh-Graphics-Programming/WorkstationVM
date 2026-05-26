@@ -6,7 +6,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 function EnableFeature($name) {
-    $feature = Get-WindowsOptionalFeature -Online -FeatureName $name
+    $feature = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction SilentlyContinue
+    if (-not $feature) {
+        if (Get-Module -ListAvailable -Name Hyper-V) { return }
+        throw "Windows optional feature '$name' was not found. This Windows edition may not support Hyper-V."
+    }
     if ($feature.State -ne "Enabled") {
         Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart | Out-Null
         $script:featureChanged = $true

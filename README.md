@@ -32,6 +32,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 Edit `config\windows.json` first if you want a different VM name, RAM, CPU count, disk size or install path.
+By default, an existing VM or disk is not deleted. Set `recreate` to `true` only when you intentionally want to replace it.
 
 The generated login is written to:
 

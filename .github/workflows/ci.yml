@@ -88,6 +88,7 @@ jobs:
           $cfg.imageCacheDir = "$env:RUNNER_TEMP/workstation-image-cache/windows"
           $cfg.memoryGB = 4
           $cfg.cpuCount = 2
+          $cfg.recreate = $true
           $cfg.createCheckpoint = $false
           $cfg.wingetPackages = @()
           $cfg | ConvertTo-Json -Depth 5 | Set-Content config/windows.json
