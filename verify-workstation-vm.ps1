@@ -220,8 +220,21 @@ echo "work_dir=$?"
 '@
 
         $sshOptions = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new")
-        $remoteOutput = $remoteScript | & ssh @sshOptions $sshTarget "bash -s -- '$($config.VMUser)'" 2>&1
-        $sshExit = $LASTEXITCODE
+        $sshIdentityPath = Join-Path $env:USERPROFILE ".ssh\workstation_jump_ed25519"
+        if (Test-Path $sshIdentityPath) {
+            $sshOptions += @("-i", $sshIdentityPath, "-o", "IdentitiesOnly=yes")
+        }
+
+        $remoteOutput = ""
+        $sshExit = 255
+        while ((Get-Date) -lt $deadline) {
+            $remoteOutput = $remoteScript | & ssh @sshOptions $sshTarget "bash -s -- '$($config.VMUser)'" 2>&1
+            $sshExit = $LASTEXITCODE
+            if ($sshExit -eq 0) {
+                break
+            }
+            Start-Sleep -Seconds 10
+        }
         Add-Check "SSH command execution" ($sshExit -eq 0) ("Target={0}; ExitCode={1}" -f $sshTarget, $sshExit)
 
         if ($sshExit -eq 0) {
