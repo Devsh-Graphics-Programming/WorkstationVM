@@ -15,22 +15,19 @@ Minimal Windows 11 Hyper-V workstation VM setup.
 Run once from PowerShell as Administrator:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\prepare-host.ps1
+Set-ExecutionPolicy -Scope Process Bypass; .\prepare-host.ps1
 ```
 
 This enables Hyper-V, adds the current user to `Hyper-V Administrators` and installs Windows ADK Deployment Tools if needed.
 
-If Hyper-V was just enabled, restart Windows.
-If only group membership changed, sign out and back in.
+After it finishes, close the Administrator PowerShell window. Open a new PowerShell session without Administrator privileges.
 
 ## Run
 
-Run from normal PowerShell:
+Run from normal PowerShell without Administrator privileges:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\create-workstation-vm.ps1 --config config\windows.json
+Set-ExecutionPolicy -Scope Process Bypass; .\create-workstation-vm.ps1 --config config\windows.json
 ```
 
 Edit `config\windows.json` first if you want a different VM name, RAM, CPU count, disk size or install path.
@@ -47,6 +44,22 @@ Check the VM:
 ```powershell
 .\check-workstation-vm.ps1 --config config\windows.json
 ```
+
+## Default Software
+
+The first-login bootstrap installs these tools inside the VM by default:
+
+- VS Code
+- Git
+- WireGuard
+
+It also enables the RDP server, Remote Desktop firewall rules and RDP access for the workstation user.
+
+## VPN
+
+If a customer provides a VPN profile or config, import and enable it inside this VM only. Do not enable customer VPN profiles on the host.
+
+The default Hyper-V network uses NAT, so host traffic and VM traffic stay on separate network paths.
 
 ## RDP
 
