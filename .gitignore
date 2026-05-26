@@ -3,5 +3,5 @@
 *.env
 *.key
 *.pem
-config/local.psd1
+config/local.json
 tmp/
