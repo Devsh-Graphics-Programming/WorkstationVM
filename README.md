@@ -8,6 +8,8 @@ Minimal Windows 11 Hyper-V workstation VM setup.
 - Virtualization enabled in BIOS/UEFI.
 - Internet access for Windows ISO and tool install.
 
+`prepare-host.ps1` checks BIOS/UEFI virtualization and stops with a clear error if it is disabled.
+
 ## Prepare Host
 
 Run once from PowerShell as Administrator:
