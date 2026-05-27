@@ -39,6 +39,13 @@ function SshKeyPath($cfg) {
     Join-Path (FullPath $cfg.baseDir) "ssh_key_ed25519.key"
 }
 
+function SecureText($text) {
+    $secure = [Security.SecureString]::new()
+    foreach ($ch in ([string]$text).ToCharArray()) { $secure.AppendChar($ch) }
+    $secure.MakeReadOnly()
+    return $secure
+}
+
 $configPath = ArgValue "config"
 if ([string]::IsNullOrWhiteSpace($configPath)) {
     throw "Usage: .\check-workstation-vm.ps1 --config config\windows.json"
@@ -66,7 +73,7 @@ if ([int]$cfg.dataDiskGB -gt 0) {
     $credentials = Credentials $cfg
     if ([string]::IsNullOrWhiteSpace($cfg.password)) { throw "Missing VM password in config or credentials.txt." }
 
-    $secure = ConvertTo-SecureString $cfg.password -AsPlainText -Force
+    $secure = SecureText $cfg.password
     $credential = [pscredential]::new($cfg.user, $secure)
     $state = Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList $cfg.dataDiskLetter, ([bool]$cfg.dataDiskBitLocker) -ScriptBlock {
         param($letter, $expectBitLocker)
@@ -105,7 +112,7 @@ if ([bool]$cfg.sshEnabled) {
     if ([string]::IsNullOrWhiteSpace($cfg.password)) { $null = Credentials $cfg }
     if ([string]::IsNullOrWhiteSpace($cfg.password)) { throw "Missing VM password in config or credentials.txt." }
 
-    $secure = ConvertTo-SecureString $cfg.password -AsPlainText -Force
+    $secure = SecureText $cfg.password
     $credential = [pscredential]::new($cfg.user, $secure)
     Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
         $service = Get-Service sshd -ErrorAction Stop

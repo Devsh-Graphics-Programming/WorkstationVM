@@ -48,8 +48,15 @@ function RemoveVm($name) {
     }
 }
 
+function SecureText($text) {
+    $secure = [Security.SecureString]::new()
+    foreach ($ch in ([string]$text).ToCharArray()) { $secure.AppendChar($ch) }
+    $secure.MakeReadOnly()
+    return $secure
+}
+
 function GuestCredential($cfg) {
-    $password = ConvertTo-SecureString $cfg.password -AsPlainText -Force
+    $password = SecureText $cfg.password
     [pscredential]::new($cfg.user, $password)
 }
 
@@ -195,7 +202,9 @@ function InitializeDataDisk($cfg, $dataVhd, $bitLockerPassword) {
         Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel $label -Confirm:$false | Out-Null
 
         if ($useBitLocker) {
-            $secure = ConvertTo-SecureString $bitLockerPassword -AsPlainText -Force
+            $secure = [Security.SecureString]::new()
+            foreach ($ch in ([string]$bitLockerPassword).ToCharArray()) { $secure.AppendChar($ch) }
+            $secure.MakeReadOnly()
             Enable-BitLocker -MountPoint $mountPoint -PasswordProtector -Password $secure -UsedSpaceOnly -SkipHardwareTest
             Resume-BitLocker -MountPoint $mountPoint
             for ($i = 0; $i -lt 60; $i++) {
