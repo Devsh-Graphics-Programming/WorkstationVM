@@ -8,9 +8,10 @@ function New-AnswerIso {
     )
 
     if (-not ("WorkstationIsoWriter" -as [type])) {
-        Add-Type -ReferencedAssemblies "Microsoft.CSharp" -TypeDefinition @'
+        Add-Type -TypeDefinition @'
 using System;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 [ComImport]
@@ -45,35 +46,51 @@ public static class WorkstationIsoWriter
         IStreamNative template,
         out IStreamNative stream);
 
+    private static object Get(object target, string name)
+    {
+        return target.GetType().InvokeMember(name, BindingFlags.GetProperty, null, target, null);
+    }
+
+    private static void Set(object target, string name, object value)
+    {
+        target.GetType().InvokeMember(name, BindingFlags.SetProperty, null, target, new object[] { value });
+    }
+
+    private static object Call(object target, string name, params object[] args)
+    {
+        return target.GetType().InvokeMember(name, BindingFlags.InvokeMethod, null, target, args);
+    }
+
     public static void Write(string sourceDir, string overlayDir, string outputPath, string volumeName, string bootImagePath)
     {
         Type imageType = Type.GetTypeFromProgID("IMAPI2FS.MsftFileSystemImage", true);
-        dynamic image = Activator.CreateInstance(imageType);
-        image.FileSystemsToCreate = String.IsNullOrWhiteSpace(bootImagePath) ? 3 : 4;
-        image.FreeMediaBlocks = 25000000;
-        image.VolumeName = volumeName;
-        image.Root.AddTree(sourceDir, false);
+        object image = Activator.CreateInstance(imageType);
+        Set(image, "FileSystemsToCreate", String.IsNullOrWhiteSpace(bootImagePath) ? 3 : 4);
+        Set(image, "FreeMediaBlocks", 25000000);
+        Set(image, "VolumeName", volumeName);
+        object root = Get(image, "Root");
+        Call(root, "AddTree", sourceDir, false);
         if (!String.IsNullOrWhiteSpace(overlayDir))
         {
-            image.Root.AddTree(overlayDir, false);
+            Call(root, "AddTree", overlayDir, false);
         }
 
         if (!String.IsNullOrWhiteSpace(bootImagePath))
         {
             Type bootType = Type.GetTypeFromProgID("IMAPI2FS.BootOptions", true);
-            dynamic boot = Activator.CreateInstance(bootType);
-            boot.Manufacturer = "Microsoft";
-            boot.PlatformId = 0xef;
-            boot.Emulation = 0;
+            object boot = Activator.CreateInstance(bootType);
+            Set(boot, "Manufacturer", "Microsoft");
+            Set(boot, "PlatformId", 0xef);
+            Set(boot, "Emulation", 0);
 
             IStreamNative bootStream;
             SHCreateStreamOnFileEx(bootImagePath, STGM_READ | STGM_SHARE_DENY_WRITE, 0, false, null, out bootStream);
-            boot.AssignBootImage(bootStream);
-            image.BootImageOptions = boot;
+            Call(boot, "AssignBootImage", bootStream);
+            Set(image, "BootImageOptions", boot);
         }
 
-        dynamic result = image.CreateResultImage();
-        object imageStream = result.ImageStream;
+        object result = Call(image, "CreateResultImage");
+        object imageStream = Get(result, "ImageStream");
         IntPtr unknown = Marshal.GetIUnknownForObject(imageStream);
         try
         {
