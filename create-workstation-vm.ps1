@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"; $scriptArgs = $args
 . (Join-Path $PSScriptRoot "lib\iso-writer.ps1")
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 
 function ArgValue($name) {
     for ($i = 0; $i -lt $scriptArgs.Count; $i++) {
