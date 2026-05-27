@@ -48,12 +48,23 @@ jobs:
       - name: Prepare host
         run: .\prepare-host.ps1
 
+      - name: Prepare Hyper-V network
+        run: |
+          Import-Module Hyper-V
+          if (-not (Get-VMSwitch -Name "workstation-ci" -ErrorAction SilentlyContinue)) {
+            New-VMSwitch -Name "workstation-ci" -SwitchType Internal | Out-Null
+          }
+          $adapter = "vEthernet (workstation-ci)"
+          if (-not (Get-NetIPAddress -InterfaceAlias $adapter -IPAddress 192.168.240.1 -ErrorAction SilentlyContinue)) {
+            New-NetIPAddress -InterfaceAlias $adapter -IPAddress 192.168.240.1 -PrefixLength 24 | Out-Null
+          }
+
       - name: Prepare CI config
         run: |
           $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
           $cfg.vmName = "ci-Windows11"
           $cfg.password = "Workstation123!"
-          $cfg.switchName = "Default Switch"
+          $cfg.switchName = "workstation-ci"
           $cfg.baseDir = "$env:RUNNER_TEMP/workstation-vm/windows11"
           $cfg.imageCacheDir = "$env:RUNNER_TEMP/workstation-image-cache/windows"
           $cfg.memoryGB = 2
@@ -66,6 +77,23 @@ jobs:
 
       - name: Create VM
         run: .\create-workstation-vm.ps1 --config config/windows.json
+
+      - name: Configure CI network
+        run: |
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          $secure = [Security.SecureString]::new()
+          foreach ($ch in $cfg.password.ToCharArray()) { $secure.AppendChar($ch) }
+          $secure.MakeReadOnly()
+          $credential = [pscredential]::new($cfg.user, $secure)
+          Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
+            $adapter = Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1
+            New-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress 192.168.240.2 -PrefixLength 24 -DefaultGateway 192.168.240.1 -ErrorAction SilentlyContinue | Out-Null
+          }
+          for ($i = 0; $i -lt 30; $i++) {
+            $ips = @(Get-VMNetworkAdapter -VMName $cfg.vmName | Select-Object -ExpandProperty IPAddresses)
+            if ($ips -contains "192.168.240.2") { break }
+            Start-Sleep -Seconds 2
+          }
 
       - name: Check VM
         run: .\check-workstation-vm.ps1 --config config/windows.json
