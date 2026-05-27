@@ -40,6 +40,23 @@ function TunePowerPlan {
     powercfg /setactive SCHEME_MIN | Out-Null
 }
 
+function ConfigureNetwork($networkPath) {
+    if (-not (Test-Path -LiteralPath $networkPath)) { return }
+
+    $config = Get-Content -Raw -LiteralPath $networkPath | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace($config.ipAddress)) { return }
+
+    $adapter = Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1
+    if (-not $adapter) { return }
+
+    if (-not (Get-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress $config.ipAddress -ErrorAction SilentlyContinue)) {
+        New-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress $config.ipAddress -PrefixLength ([int]$config.prefixLength) -DefaultGateway $config.gateway | Out-Null
+    }
+    if ($config.dnsServers) {
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses @($config.dnsServers) | Out-Null
+    }
+}
+
 function EnableSshServer($authorizedKeyPath) {
     if (-not (Test-Path -LiteralPath $authorizedKeyPath)) { return }
 
@@ -89,6 +106,7 @@ $media = Get-PSDrive -PSProvider FileSystem |
     Select-Object -First 1
 
 if ($media) {
+    ConfigureNetwork (Join-Path $media.Root "network.json")
     EnableSshServer (Join-Path $media.Root "ssh_authorized_key.pub")
 }
 

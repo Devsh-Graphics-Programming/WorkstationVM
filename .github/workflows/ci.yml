@@ -58,6 +58,9 @@ jobs:
           if (-not (Get-NetIPAddress -InterfaceAlias $adapter -IPAddress 192.168.240.1 -ErrorAction SilentlyContinue)) {
             New-NetIPAddress -InterfaceAlias $adapter -IPAddress 192.168.240.1 -PrefixLength 24 | Out-Null
           }
+          if (-not (Get-NetNat -Name "workstation-ci" -ErrorAction SilentlyContinue)) {
+            New-NetNat -Name "workstation-ci" -InternalIPInterfaceAddressPrefix "192.168.240.0/24" | Out-Null
+          }
 
       - name: Prepare CI config
         run: |
@@ -71,6 +74,10 @@ jobs:
           $cfg.cpuCount = 2
           $cfg.dataDiskGB = 1
           $cfg.sshEnabled = $true
+          $cfg | Add-Member -Force NoteProperty guestIpAddress "192.168.240.2"
+          $cfg | Add-Member -Force NoteProperty guestPrefixLength 24
+          $cfg | Add-Member -Force NoteProperty guestGateway "192.168.240.1"
+          $cfg | Add-Member -Force NoteProperty guestDnsServers @("1.1.1.1", "8.8.8.8")
           $cfg.recreate = $true
           $cfg.wingetPackages = @()
           $cfg | ConvertTo-Json -Depth 5 | Set-Content config/windows.json
@@ -78,22 +85,15 @@ jobs:
       - name: Create VM
         run: .\create-workstation-vm.ps1 --config config/windows.json
 
-      - name: Configure CI network
+      - name: Check CI network
         run: |
           $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
-          $secure = [Security.SecureString]::new()
-          foreach ($ch in $cfg.password.ToCharArray()) { $secure.AppendChar($ch) }
-          $secure.MakeReadOnly()
-          $credential = [pscredential]::new($cfg.user, $secure)
-          Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
-            $adapter = Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1
-            New-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress 192.168.240.2 -PrefixLength 24 -DefaultGateway 192.168.240.1 -ErrorAction SilentlyContinue | Out-Null
-          }
           for ($i = 0; $i -lt 30; $i++) {
             $ips = @(Get-VMNetworkAdapter -VMName $cfg.vmName | Select-Object -ExpandProperty IPAddresses)
             if ($ips -contains "192.168.240.2") { break }
             Start-Sleep -Seconds 2
           }
+          if ($ips -notcontains "192.168.240.2") { throw "CI VM IP address was not reported by Hyper-V." }
 
       - name: Check VM
         run: .\check-workstation-vm.ps1 --config config/windows.json

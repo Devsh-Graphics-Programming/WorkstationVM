@@ -129,6 +129,14 @@ function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey) {
     if ($sshKey) {
         Copy-Item -LiteralPath $sshKey.Public -Destination (Join-Path $dir "ssh_authorized_key.pub") -Force
     }
+    if (-not [string]::IsNullOrWhiteSpace($cfg.guestIpAddress)) {
+        [ordered]@{
+            ipAddress = $cfg.guestIpAddress
+            prefixLength = if ($cfg.guestPrefixLength) { [int]$cfg.guestPrefixLength } else { 24 }
+            gateway = $cfg.guestGateway
+            dnsServers = @($cfg.guestDnsServers)
+        } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $dir "network.json") -Encoding UTF8
+    }
 
     $xml = Get-Content -Raw (Join-Path $PSScriptRoot "templates\windows11-autounattend.xml")
     $xml = $xml.Replace("{{VM_NAME}}", (Xml $cfg.vmName))
