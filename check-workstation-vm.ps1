@@ -46,6 +46,14 @@ function SecureText($text) {
     return $secure
 }
 
+function GuestCredential($cfg) {
+    if ([string]::IsNullOrWhiteSpace($cfg.password)) { $null = Credentials $cfg }
+    if ([string]::IsNullOrWhiteSpace($cfg.password)) { throw "Missing VM password in config or credentials.txt." }
+
+    $secure = SecureText $cfg.password
+    [pscredential]::new($cfg.user, $secure)
+}
+
 $configPath = ArgValue "config"
 if ([string]::IsNullOrWhiteSpace($configPath)) {
     throw "Usage: .\check-workstation-vm.ps1 --config config\windows.json"
@@ -69,24 +77,155 @@ if ($vm.State -ne "Running") {
 
 Write-Host "VM running: $($vm.Name)"
 
+$credential = GuestCredential $cfg
+$sessionState = Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList $cfg.user -ScriptBlock {
+    param($expectedUser)
+
+    function RegistryValue($path, $name) {
+        $item = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+        if (-not $item) { return $null }
+        return $item.$name
+    }
+
+    function RegistryValueExists($path, $name) {
+        $item = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+        if (-not $item) { return $false }
+        return $null -ne ($item.PSObject.Properties | Where-Object Name -eq $name)
+    }
+
+    function PowerValues($subgroup, $setting) {
+        $ac = $null
+        $dc = $null
+        $output = powercfg /query SCHEME_CURRENT $subgroup $setting 2>$null
+        if (-not ($output | Select-String -Pattern "Current AC Power Setting Index" -Quiet)) {
+            $output = powercfg /qh SCHEME_CURRENT $subgroup $setting 2>$null
+        }
+        foreach ($line in $output) {
+            if ($line -match "Current AC Power Setting Index:\s+0x([0-9a-fA-F]+)") {
+                $ac = [Convert]::ToInt64($Matches[1], 16)
+            } elseif ($line -match "Current DC Power Setting Index:\s+0x([0-9a-fA-F]+)") {
+                $dc = [Convert]::ToInt64($Matches[1], 16)
+            }
+        }
+        [pscustomobject]@{
+            AC = $ac
+            DC = $dc
+        }
+    }
+
+    $winlogon = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+    $screen = "HKCU:\Control Panel\Desktop"
+    $screenPolicy = "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop"
+    $terminalPolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+    $rdpTcp = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+
+    [pscustomobject]@{
+        AutoAdminLogon = [string](RegistryValue $winlogon AutoAdminLogon)
+        DefaultUserName = [string](RegistryValue $winlogon DefaultUserName)
+        HasDefaultPassword = -not [string]::IsNullOrWhiteSpace([string](RegistryValue $winlogon DefaultPassword))
+        AutoLogonCountExists = RegistryValueExists $winlogon AutoLogonCount
+        InactivityTimeoutSecs = [int](RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" InactivityTimeoutSecs)
+        NoLockScreen = [int](RegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" NoLockScreen)
+        ScreenSaveActive = [string](RegistryValue $screen ScreenSaveActive)
+        ScreenSaverIsSecure = [string](RegistryValue $screen ScreenSaverIsSecure)
+        ScreenSaveTimeOut = [string](RegistryValue $screen ScreenSaveTimeOut)
+        ScreenSaveExecutableExists = RegistryValueExists $screen "SCRNSAVE.EXE"
+        ScreenSaveActivePolicy = [string](RegistryValue $screenPolicy ScreenSaveActive)
+        ScreenSaverIsSecurePolicy = [string](RegistryValue $screenPolicy ScreenSaverIsSecure)
+        ScreenSaveTimeOutPolicy = [string](RegistryValue $screenPolicy ScreenSaveTimeOut)
+        TerminalServicesMaxConnectionTime = [int](RegistryValue $terminalPolicy MaxConnectionTime)
+        TerminalServicesMaxDisconnectionTime = [int](RegistryValue $terminalPolicy MaxDisconnectionTime)
+        TerminalServicesMaxIdleTime = [int](RegistryValue $terminalPolicy MaxIdleTime)
+        TerminalServicesPromptForPasswordPolicy = [int](RegistryValue $terminalPolicy fPromptForPassword)
+        RdpPromptForPassword = [int](RegistryValue $rdpTcp fPromptForPassword)
+        VideoIdle = PowerValues SUB_VIDEO VIDEOIDLE
+        StandbyIdle = PowerValues SUB_SLEEP STANDBYIDLE
+        HibernateIdle = PowerValues SUB_SLEEP HIBERNATEIDLE
+        DiskIdle = PowerValues SUB_DISK DISKIDLE
+        RequirePasswordOnWake = PowerValues "fea3413e-7e05-4911-9a71-700331f1c294" "0e796bdb-100d-47d6-a2d5-f7d2daa51f51"
+    }
+}
+
+if ($sessionState.AutoAdminLogon -ne "1") { throw "AutoAdminLogon is not enabled." }
+if ($sessionState.DefaultUserName -ne $cfg.user) { throw "DefaultUserName is '$($sessionState.DefaultUserName)', expected '$($cfg.user)'." }
+if (-not $sessionState.HasDefaultPassword) { throw "DefaultPassword is missing for AutoAdminLogon." }
+if ($sessionState.AutoLogonCountExists) { throw "AutoLogonCount still exists, autologon is still count-limited." }
+if ($sessionState.InactivityTimeoutSecs -ne 0) { throw "InactivityTimeoutSecs is not disabled." }
+if ($sessionState.NoLockScreen -ne 1) { throw "NoLockScreen is not enabled." }
+if ($sessionState.ScreenSaveActive -ne "0" -or $sessionState.ScreenSaverIsSecure -ne "0" -or $sessionState.ScreenSaveTimeOut -ne "0") {
+    throw "User screensaver lock settings are not disabled."
+}
+if ($sessionState.ScreenSaveExecutableExists) { throw "A user screensaver executable is still configured." }
+if ($sessionState.ScreenSaveActivePolicy -ne "0" -or $sessionState.ScreenSaverIsSecurePolicy -ne "0" -or $sessionState.ScreenSaveTimeOutPolicy -ne "0") {
+    throw "User screensaver lock policy is not disabled."
+}
+if ($sessionState.TerminalServicesMaxConnectionTime -ne 0 -or $sessionState.TerminalServicesMaxDisconnectionTime -ne 0 -or $sessionState.TerminalServicesMaxIdleTime -ne 0) {
+    throw "Remote Desktop session time limits are not disabled."
+}
+if ($sessionState.TerminalServicesPromptForPasswordPolicy -ne 0 -or $sessionState.RdpPromptForPassword -ne 0) {
+    throw "Remote Desktop password prompt on reconnect is not disabled."
+}
+
+foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "DiskIdle", "RequirePasswordOnWake")) {
+    $values = $sessionState.$setting
+    if ($values.AC -ne 0 -or $values.DC -ne 0) {
+        throw "$setting is not set to Never/Disabled for AC and DC."
+    }
+}
+
+Write-Host "Interactive session policy ready: autologon=on auto-lock=off power-timeouts=never"
+
 if ([int]$cfg.dataDiskGB -gt 0) {
     $credentials = Credentials $cfg
-    if ([string]::IsNullOrWhiteSpace($cfg.password)) { throw "Missing VM password in config or credentials.txt." }
+    $bitLockerPassword = ""
+    if ([bool]$cfg.dataDiskBitLocker) {
+        if (-not $credentials.ContainsKey("DataDiskBitLockerPassword")) {
+            throw "credentials.txt does not contain DataDiskBitLockerPassword."
+        }
+        $bitLockerPassword = $credentials["DataDiskBitLockerPassword"]
+    }
 
-    $secure = SecureText $cfg.password
-    $credential = [pscredential]::new($cfg.user, $secure)
-    $state = Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList $cfg.dataDiskLetter, ([bool]$cfg.dataDiskBitLocker) -ScriptBlock {
-        param($letter, $expectBitLocker)
+    $state = Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList $cfg.dataDiskLetter, $cfg.dataDiskLabel, ([bool]$cfg.dataDiskBitLocker), $bitLockerPassword -ScriptBlock {
+        param($letter, $label, $expectBitLocker, $bitLockerPassword)
 
         $letter = ([string]$letter).TrimEnd(":")
+        $mountPoint = "${letter}:"
+        $bitLocker = if ($expectBitLocker) { Get-BitLockerVolume -MountPoint $mountPoint -ErrorAction Stop } else { $null }
+        $wasLocked = $false
+
+        if ($bitLocker -and $bitLocker.LockStatus -eq "Locked") {
+            if ([string]::IsNullOrWhiteSpace($bitLockerPassword)) {
+                throw "Data disk is BitLocker locked and no password was provided."
+            }
+
+            $secure = [Security.SecureString]::new()
+            foreach ($ch in ([string]$bitLockerPassword).ToCharArray()) { $secure.AppendChar($ch) }
+            $secure.MakeReadOnly()
+            Unlock-BitLocker -MountPoint $mountPoint -Password $secure | Out-Null
+            $wasLocked = $true
+
+            for ($i = 0; $i -lt 30; $i++) {
+                $bitLocker = Get-BitLockerVolume -MountPoint $mountPoint -ErrorAction Stop
+                if ($bitLocker.LockStatus -ne "Locked") { break }
+                Start-Sleep -Seconds 1
+            }
+        }
+
         $volume = Get-Volume -DriveLetter $letter -ErrorAction Stop
-        $bitLocker = if ($expectBitLocker) { Get-BitLockerVolume -MountPoint "${letter}:" -ErrorAction Stop } else { $null }
+        if ($volume.FileSystemLabel -ne $label) {
+            throw "Unexpected data disk label: $($volume.FileSystemLabel)"
+        }
+        if ($bitLocker) { $bitLocker = Get-BitLockerVolume -MountPoint $mountPoint -ErrorAction Stop }
+
         [pscustomobject]@{
             DriveLetter = $volume.DriveLetter
             FileSystemLabel = $volume.FileSystemLabel
             SizeGB = [math]::Round($volume.Size / 1GB, 2)
             BitLockerProtection = if ($bitLocker) { [string]$bitLocker.ProtectionStatus } else { "NotChecked" }
             BitLockerStatus = if ($bitLocker) { [string]$bitLocker.VolumeStatus } else { "NotChecked" }
+            BitLockerLockStatus = if ($bitLocker) { [string]$bitLocker.LockStatus } else { "NotChecked" }
+            BitLockerAutoUnlock = if ($bitLocker) { [bool]$bitLocker.AutoUnlockEnabled } else { $false }
+            BitLockerWasLocked = $wasLocked
         }
     }
 
@@ -99,21 +238,18 @@ if ([int]$cfg.dataDiskGB -gt 0) {
     if ([bool]$cfg.dataDiskBitLocker -and $state.BitLockerProtection -ne "On") {
         throw "Data disk BitLocker protection is not on: $($state.BitLockerProtection)"
     }
-    if ([bool]$cfg.dataDiskBitLocker -and -not $credentials.ContainsKey("DataDiskBitLockerPassword")) {
-        throw "credentials.txt does not contain DataDiskBitLockerPassword."
+    if ([bool]$cfg.dataDiskBitLocker -and $state.BitLockerAutoUnlock) {
+        throw "Data disk BitLocker auto-unlock is enabled."
     }
 
-    Write-Host "Data disk ready: $($state.DriveLetter): $($state.SizeGB) GB BitLocker=$($state.BitLockerProtection)"
+    $lockNote = if ($state.BitLockerWasLocked) { " unlocked-for-check=true" } else { "" }
+    Write-Host "Data disk ready: $($state.DriveLetter): $($state.SizeGB) GB BitLocker=$($state.BitLockerProtection)$lockNote"
 }
 
 if ([bool]$cfg.sshEnabled) {
     $key = SshKeyPath $cfg
     if (-not (Test-Path -LiteralPath $key)) { throw "Missing SSH private key: $key" }
-    if ([string]::IsNullOrWhiteSpace($cfg.password)) { $null = Credentials $cfg }
-    if ([string]::IsNullOrWhiteSpace($cfg.password)) { throw "Missing VM password in config or credentials.txt." }
 
-    $secure = SecureText $cfg.password
-    $credential = [pscredential]::new($cfg.user, $secure)
     Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
         $service = Get-Service sshd -ErrorAction Stop
         if ($service.Status -ne "Running") { throw "sshd is not running." }

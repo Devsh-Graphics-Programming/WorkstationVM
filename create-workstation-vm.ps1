@@ -125,6 +125,10 @@ function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey) {
 
     $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     Set-Content -LiteralPath (Join-Path $dir "packages.txt") -Value $packages -Encoding UTF8
+    [ordered]@{
+        autoLogonUser = $cfg.user
+        autoLogonPassword = $cfg.password
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir "bootstrap-config.json") -Encoding UTF8
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "bootstrap-windows.ps1") -Destination $dir -Force
     if ($sshKey) {
         Copy-Item -LiteralPath $sshKey.Public -Destination (Join-Path $dir "ssh_authorized_key.pub") -Force
@@ -215,13 +219,24 @@ function InitializeDataDisk($cfg, $dataVhd, $bitLockerPassword) {
             $secure.MakeReadOnly()
             Enable-BitLocker -MountPoint $mountPoint -PasswordProtector -Password $secure -UsedSpaceOnly -SkipHardwareTest
             Resume-BitLocker -MountPoint $mountPoint
-            for ($i = 0; $i -lt 60; $i++) {
+            $lastStatus = ""
+            for ($i = 0; $i -lt 180; $i++) {
                 $volume = Get-BitLockerVolume -MountPoint $mountPoint
+                if ($volume.VolumeStatus -eq "EncryptionPaused") {
+                    Resume-BitLocker -MountPoint $mountPoint
+                }
+                $status = "BitLocker $mountPoint protection=$($volume.ProtectionStatus) status=$($volume.VolumeStatus) lock=$($volume.LockStatus) encrypted=$($volume.EncryptionPercentage)%"
+                if ($status -ne $lastStatus) {
+                    Write-Output $status
+                    $lastStatus = $status
+                }
                 if ($volume.ProtectionStatus -eq "On" -and $volume.VolumeStatus -ne "EncryptionInProgress") { break }
                 Start-Sleep -Seconds 5
             }
             $volume = Get-BitLockerVolume -MountPoint $mountPoint
-            if ($volume.ProtectionStatus -ne "On") { throw "BitLocker did not enable on $mountPoint." }
+            if ($volume.ProtectionStatus -ne "On") {
+                throw "BitLocker did not enable on $mountPoint. Protection=$($volume.ProtectionStatus) Status=$($volume.VolumeStatus) Lock=$($volume.LockStatus) Encrypted=$($volume.EncryptionPercentage)%"
+            }
         }
 
         Get-Volume -DriveLetter $letter | Select-Object DriveLetter, FileSystemLabel, Size

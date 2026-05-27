@@ -5,6 +5,13 @@ $log = Join-Path $root "bootstrap.log"
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 Start-Transcript -Path $log -Append | Out-Null
 
+function SetRegistryValue($path, $name, $type, $value) {
+    if (-not (Test-Path -Path $path)) {
+        New-Item -Path $path -Force | Out-Null
+    }
+    New-ItemProperty -Path $path -Name $name -PropertyType $type -Value $value -Force | Out-Null
+}
+
 function EnableRemoteDesktop {
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Type DWord -Value 0
     Set-Service -Name TermService -StartupType Automatic
@@ -34,10 +41,97 @@ function TuneRemoteDesktop {
     New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force | Out-Null
     New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name SystemResponsiveness -PropertyType DWord -Value 0 -Force | Out-Null
     New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name NetworkThrottlingIndex -PropertyType DWord -Value 0xffffffff -Force | Out-Null
+
+    New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name MaxConnectionTime -PropertyType DWord -Value 0 -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name MaxDisconnectionTime -PropertyType DWord -Value 0 -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name MaxIdleTime -PropertyType DWord -Value 0 -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name fPromptForPassword -PropertyType DWord -Value 0 -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name fResetBroken -PropertyType DWord -Value 0 -Force | Out-Null
+
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name fPromptForPassword -PropertyType DWord -Value 0 -Force | Out-Null
 }
 
 function TunePowerPlan {
+    powercfg /hibernate off | Out-Null
+
+    $schemes = @(powercfg /list | ForEach-Object {
+        if ($_ -match "Power Scheme GUID:\s+([0-9a-fA-F-]{36})") { $Matches[1] }
+    })
+    if ($schemes.Count -eq 0) { $schemes = @("SCHEME_CURRENT") }
+
+    foreach ($scheme in $schemes) {
+        powercfg /setacvalueindex $scheme SUB_VIDEO VIDEOIDLE 0 | Out-Null
+        powercfg /setdcvalueindex $scheme SUB_VIDEO VIDEOIDLE 0 | Out-Null
+        powercfg /setacvalueindex $scheme SUB_SLEEP STANDBYIDLE 0 | Out-Null
+        powercfg /setdcvalueindex $scheme SUB_SLEEP STANDBYIDLE 0 | Out-Null
+        powercfg /setacvalueindex $scheme SUB_SLEEP HIBERNATEIDLE 0 | Out-Null
+        powercfg /setdcvalueindex $scheme SUB_SLEEP HIBERNATEIDLE 0 | Out-Null
+        powercfg /setacvalueindex $scheme SUB_SLEEP 7bc4a2f9-d8fc-4469-b07b-33eb785aaca0 0 | Out-Null
+        powercfg /setdcvalueindex $scheme SUB_SLEEP 7bc4a2f9-d8fc-4469-b07b-33eb785aaca0 0 | Out-Null
+        powercfg /setacvalueindex $scheme SUB_DISK DISKIDLE 0 | Out-Null
+        powercfg /setdcvalueindex $scheme SUB_DISK DISKIDLE 0 | Out-Null
+        powercfg /setacvalueindex $scheme SUB_VIDEO 8ec4b3a5-6868-48c2-be75-4f3044be88a7 0 | Out-Null
+        powercfg /setdcvalueindex $scheme SUB_VIDEO 8ec4b3a5-6868-48c2-be75-4f3044be88a7 0 | Out-Null
+        powercfg /setacvalueindex $scheme fea3413e-7e05-4911-9a71-700331f1c294 0e796bdb-100d-47d6-a2d5-f7d2daa51f51 0 | Out-Null
+        powercfg /setdcvalueindex $scheme fea3413e-7e05-4911-9a71-700331f1c294 0e796bdb-100d-47d6-a2d5-f7d2daa51f51 0 | Out-Null
+    }
+
     powercfg /setactive SCHEME_MIN | Out-Null
+}
+
+function DisableAutomaticLock {
+    SetRegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" InactivityTimeoutSecs DWord 0
+    SetRegistryValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" NoLockScreen DWord 1
+
+    SetRegistryValue "HKCU:\Control Panel\Desktop" ScreenSaveActive String "0"
+    SetRegistryValue "HKCU:\Control Panel\Desktop" ScreenSaverIsSecure String "0"
+    SetRegistryValue "HKCU:\Control Panel\Desktop" ScreenSaveTimeOut String "0"
+    Remove-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "SCRNSAVE.EXE" -ErrorAction SilentlyContinue
+
+    SetRegistryValue "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop" ScreenSaveActive String "0"
+    SetRegistryValue "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop" ScreenSaverIsSecure String "0"
+    SetRegistryValue "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop" ScreenSaveTimeOut String "0"
+    SetRegistryValue "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" EnableGoodbye DWord 0
+}
+
+function ReadBootstrapConfig($configPath) {
+    if (-not (Test-Path -LiteralPath $configPath)) { return [pscustomobject]@{} }
+
+    try {
+        return Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
+    } catch {
+        Write-Output "Bootstrap config read failed: $_"
+        return [pscustomobject]@{}
+    }
+}
+
+function EnablePersistentAutoLogon($config) {
+    $user = [string]$config.autoLogonUser
+    $password = [string]$config.autoLogonPassword
+    if ([string]::IsNullOrWhiteSpace($user)) { $user = $env:USERNAME }
+
+    $winlogon = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        $existing = Get-ItemProperty -Path $winlogon -ErrorAction SilentlyContinue
+        if ($existing) { $password = [string]$existing.DefaultPassword }
+    }
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        Write-Output "Persistent autologon skipped because no password was available."
+        return
+    }
+
+    SetRegistryValue $winlogon AutoAdminLogon String "1"
+    SetRegistryValue $winlogon DefaultUserName String $user
+    SetRegistryValue $winlogon DefaultPassword String $password
+    SetRegistryValue $winlogon DefaultDomainName String $env:COMPUTERNAME
+    Remove-ItemProperty -Path $winlogon -Name AutoLogonCount -ErrorAction SilentlyContinue
+
+    try {
+        Set-LocalUser -Name $user -PasswordNeverExpires $true -ErrorAction Stop
+    } catch {
+        Write-Output "PasswordNeverExpires setup failed: $_"
+    }
 }
 
 function ConfigureNetwork($networkPath) {
@@ -97,13 +191,20 @@ function Shortcut($name, $target) {
     $shortcut.Save()
 }
 
-EnableRemoteDesktop
-TuneRemoteDesktop
-TunePowerPlan
-
 $media = Get-PSDrive -PSProvider FileSystem |
     Where-Object { Test-Path (Join-Path $_.Root "packages.txt") } |
     Select-Object -First 1
+
+$bootstrapConfig = [pscustomobject]@{}
+if ($media) {
+    $bootstrapConfig = ReadBootstrapConfig (Join-Path $media.Root "bootstrap-config.json")
+}
+
+EnableRemoteDesktop
+TuneRemoteDesktop
+TunePowerPlan
+DisableAutomaticLock
+EnablePersistentAutoLogon $bootstrapConfig
 
 if ($media) {
     ConfigureNetwork (Join-Path $media.Root "network.json")

@@ -18,6 +18,8 @@ The script can download the Windows ISO automatically. You can also download the
 - Sets the VMConnect display size from `displayWidth` and `displayHeight`, or from the host primary display when they are empty.
 - Enables Hyper-V Enhanced Session transport for VMConnect.
 - Installs Windows with an unattended local admin account.
+- Keeps the workstation account signed in automatically after boot.
+- Disables guest sleep, hibernation, display timeout, screensaver lock and idle session lock.
 - Installs VS Code, Git, WireGuard and Tor Browser on first login through `winget`.
 - Adds desktop shortcuts for VS Code, Git Bash, WireGuard and Tor Browser.
 - Enables the RDP server during first login.
@@ -33,6 +35,7 @@ The script can download the Windows ISO automatically. You can also download the
 - Keep VPN profiles, work accounts and work browser sessions inside the VM.
 - Host traffic is separate from VM traffic. The VM gets its own NATed network path.
 - Hyper-V Enhanced Session is enabled for local VMConnect use.
+- The VM is intentionally configured as an always-open workstation session unless it is locked manually.
 - Secure Boot and TPM are enabled.
 - A separate BitLocker-protected data disk is created for confidential files.
 - Dynamic memory and automatic checkpoints are disabled.
@@ -69,7 +72,7 @@ The generated login is written to:
 $HOME\VMs\WorkstationWindows11\credentials.txt
 ```
 
-The file contains the VM username, password and data disk BitLocker password. Hyper-V Manager may reconnect to the active local session without asking, but use this login for RDP, PowerShell Direct or manual sign-in when needed.
+The file contains the VM username, password and data disk BitLocker password. VMConnect should reconnect to the already unlocked local session after the guest boots. Use this login for RDP, PowerShell Direct or manual sign-in when needed.
 Print it from PowerShell with:
 
 ```powershell
@@ -168,6 +171,8 @@ ssh -i "$HOME\VMs\WorkstationWindows11\ssh_key_ed25519.key" work@<vm-ip>
 ## Display Performance
 
 The bootstrap tunes the VM for stable 60 FPS VMConnect Enhanced Session and RDP use instead of the default 30 FPS behavior.
+
+The guest also disables automatic sleep, hibernation, display power-off, screensaver lock, idle lock and RDP idle/disconnect time limits. BitLocker on the data disk remains separate and still requires the generated data disk BitLocker password after a guest restart.
 
 Higher refresh rates are not expected through the standard Hyper-V VMConnect or RDP path without GPU passthrough. GPU passthrough is intentionally not configured by this setup because it is hardware-specific and changes how the host and VM share the GPU.
 
