@@ -8,7 +8,7 @@ function New-AnswerIso {
     )
 
     if (-not ("WorkstationIsoWriter" -as [type])) {
-        Add-Type -TypeDefinition @'
+        Add-Type -ReferencedAssemblies "Microsoft.CSharp" -TypeDefinition @'
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
