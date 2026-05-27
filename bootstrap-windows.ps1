@@ -116,22 +116,24 @@ if ($media) {
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 }
 
-for ($i = 0; $i -lt 60; $i++) {
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($winget) { break }
-    Start-Sleep -Seconds 10
-}
+if ($packages.Count -gt 0) {
+    for ($i = 0; $i -lt 60; $i++) {
+        $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if ($winget) { break }
+        Start-Sleep -Seconds 10
+    }
 
-if (-not $winget) {
-    "winget.exe was not found." | Out-File -FilePath $log -Append
-    Stop-Transcript | Out-Null
-    exit 1
-}
+    if (-not $winget) {
+        "winget.exe was not found." | Out-File -FilePath $log -Append
+        Stop-Transcript | Out-Null
+        exit 1
+    }
 
-foreach ($package in $packages) {
-    & winget.exe install --id $package --exact --source winget --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) {
-        Write-Output "Install failed: $package ($LASTEXITCODE)"
+    foreach ($package in $packages) {
+        & winget.exe install --id $package --exact --source winget --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Write-Output "Install failed: $package ($LASTEXITCODE)"
+        }
     }
 }
 
