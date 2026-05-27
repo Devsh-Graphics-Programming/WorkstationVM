@@ -6,8 +6,9 @@ The script can download the Windows ISO automatically. You can also download the
 
 ## Requirements
 
-- Windows host with Hyper-V support.
-- Virtualization enabled in BIOS/UEFI.
+- Windows host with Hyper-V support. Hyper-V requires Windows 10/11 Professional, Enterprise or Education according to [Microsoft's Hyper-V setup docs](https://learn.microsoft.com/virtualization/hyper-v-on-windows/quick-start/enable-hyper-v).
+- Virtualization enabled in BIOS/UEFI. This is usually named Intel VT-x, Intel Virtualization Technology, AMD-V or SVM.
+- Windows OpenSSH client on the host for generated SSH key support. The prepare script installs it if needed.
 - Internet access for Windows ISO download, unless `windowsIsoPath` points to an existing local ISO.
 
 ## What It Does
@@ -22,6 +23,8 @@ The script can download the Windows ISO automatically. You can also download the
 - Adds desktop shortcuts for VS Code, Git Bash, WireGuard and Tor Browser.
 - Enables the RDP server during first login.
 - Tunes the guest RDP/DWM frame interval and power plan for smoother interactive sessions.
+- Creates a second dynamic data disk, formats it as `W:` and enables BitLocker on it.
+- Generates an SSH key and enables OpenSSH Server inside the VM for the workstation user.
 - Waits until the guest finishes bootstrap and is ready to use.
 
 ## Important Settings
@@ -32,6 +35,7 @@ The script can download the Windows ISO automatically. You can also download the
 - Host traffic is separate from VM traffic. The VM gets its own NATed network path.
 - Hyper-V Enhanced Session is enabled for local VMConnect use.
 - Secure Boot and TPM are enabled.
+- A separate BitLocker-protected data disk is created for confidential files.
 - Dynamic memory and automatic checkpoints are disabled.
 - No checkpoints are created by default.
 
@@ -43,7 +47,9 @@ Run once from PowerShell **as Administrator**:
 Set-ExecutionPolicy -Scope Process Bypass; .\prepare-host.ps1
 ```
 
-This validates BIOS/UEFI virtualization setup, enables Hyper-V, enables Hyper-V Enhanced Session Mode and adds the current user to `Hyper-V Administrators`.
+This validates BIOS/UEFI virtualization setup, enables Hyper-V, installs the Windows OpenSSH client if needed, enables Hyper-V Enhanced Session Mode and adds the current user to `Hyper-V Administrators`.
+
+If virtualization is disabled in BIOS/UEFI, the script stops before changing the VM setup. Enable Intel VT-x, Intel Virtualization Technology, AMD-V or SVM in BIOS/UEFI, restart Windows, then run the prepare step again.
 
 After it finishes, close the Administrator PowerShell window. Open a new PowerShell session **without Administrator privileges**.
 
@@ -64,7 +70,7 @@ The generated login is written to:
 $HOME\VMs\WorkstationWindows11\credentials.txt
 ```
 
-The file contains the VM username and password. Hyper-V Manager may reconnect to the active local session without asking, but use this login for RDP, PowerShell Direct or manual sign-in when needed.
+The file contains the VM username, password and data disk BitLocker password. Hyper-V Manager may reconnect to the active local session without asking, but use this login for RDP, PowerShell Direct or manual sign-in when needed.
 Print it from PowerShell with:
 
 ```powershell
@@ -91,6 +97,39 @@ Check the VM:
 
 Use Hyper-V Manager for changes like CPU count, memory, display size or disk expansion. Some changes require the VM to be shut down first. Keep `recreate` set to `false` unless replacing the VM and its disk is intentional.
 
+## BitLocker Data Disk
+
+The setup creates a second dynamic data disk by default:
+
+- Drive letter: `W:`
+- Initial maximum size: 24 GB
+- File system label: `WorkData`
+- BitLocker: enabled with used-space-only encryption
+
+Use this disk for confidential work files such as VPN configs, client-provided documents, keys or other sensitive working data.
+
+The BitLocker password is generated during bootstrap and written to `credentials.txt` under `baseDir`. After a VM restart, unlock the disk from Windows Explorer or with:
+
+Treat `credentials.txt` as sensitive. Move the BitLocker password to a password manager and remove the local copy if the VM folder may be shared or copied.
+
+```powershell
+$password = Read-Host "BitLocker password" -AsSecureString
+Unlock-BitLocker -MountPoint W: -Password $password
+```
+
+The data disk is a dynamic VHDX. It can be expanded later without recreating the VM. Shut down the VM, resize the VHDX on the host, start the VM, then extend the partition inside Windows:
+
+```powershell
+Resize-VHD -Path "$HOME\VMs\WorkstationWindows11\vm\WorkstationW11-data.vhdx" -SizeBytes 128GB
+```
+
+Inside the VM:
+
+```powershell
+$size = Get-PartitionSupportedSize -DriveLetter W
+Resize-Partition -DriveLetter W -Size $size.SizeMax
+```
+
 ## Default Software
 
 The first-login bootstrap installs these tools inside the VM by default:
@@ -101,7 +140,29 @@ The first-login bootstrap installs these tools inside the VM by default:
 - Tor Browser
 
 It also enables the RDP server, Remote Desktop firewall rules and RDP access for the workstation user.
+It also enables OpenSSH Server and installs the generated SSH public key for the workstation user.
 Remote Desktop frame pacing is tuned during bootstrap so VMConnect Enhanced Session and RDP do not use the default 30 FPS cap. The target is stable 60 FPS for remote sessions.
+
+## SSH
+
+The setup generates an SSH key pair under `baseDir`:
+
+- Private key: `ssh_key_ed25519.key`
+- Public key: `ssh_key_ed25519.key.pub`
+
+The public key is installed inside the VM for the workstation admin user. The private key stays on the host next to `credentials.txt`.
+
+Get the VM IP address from PowerShell:
+
+```powershell
+Get-VMNetworkAdapter -VMName WorkstationW11 | Select-Object -ExpandProperty IPAddresses
+```
+
+Connect from the host:
+
+```powershell
+ssh -i "$HOME\VMs\WorkstationWindows11\ssh_key_ed25519.key" work@<vm-ip>
+```
 
 ## Display Performance
 

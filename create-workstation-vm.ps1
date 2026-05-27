@@ -23,6 +23,14 @@ function Password {
     -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
 }
 
+function BitLockerPassword {
+    $sets = @("abcdefghijkmnopqrstuvwxyz", "ABCDEFGHJKLMNPQRSTUVWXYZ", "23456789", "!@#$%_-+=")
+    $all = ($sets -join "").ToCharArray()
+    $chars = @($sets | ForEach-Object { $_[(Get-Random -Maximum $_.Length)] })
+    $chars += 1..28 | ForEach-Object { $all[(Get-Random -Maximum $all.Length)] }
+    -join ($chars | Sort-Object { Get-Random })
+}
+
 function Xml($text) {
     [Security.SecurityElement]::Escape([string]$text)
 }
@@ -37,6 +45,37 @@ function RemoveVm($name) {
     if ($vm) {
         Stop-VM -Name $name -TurnOff -Force -ErrorAction SilentlyContinue
         Remove-VM -Name $name -Force
+    }
+}
+
+function GuestCredential($cfg) {
+    $password = ConvertTo-SecureString $cfg.password -AsPlainText -Force
+    [pscredential]::new($cfg.user, $password)
+}
+
+function SecurePrivateKey($path) {
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls.exe $path /inheritance:r /grant:r "${user}:F" | Out-Null
+}
+
+function EnsureSshKey($cfg, $baseDir) {
+    if (-not [bool]$cfg.sshEnabled) { return $null }
+
+    $privateKey = Join-Path $baseDir "ssh_key_ed25519.key"
+    $publicKey = "$privateKey.pub"
+    if (-not (Test-Path -LiteralPath $privateKey)) {
+        $sshKeygen = Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue
+        if (-not $sshKeygen) { throw "ssh-keygen.exe was not found. Install the Windows OpenSSH client." }
+        & $sshKeygen.Source -t ed25519 -N "" -f $privateKey -C "$($cfg.vmName)-workstation" | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $publicKey)) {
+        & (Get-Command ssh-keygen.exe).Source -y -f $privateKey | Set-Content -LiteralPath $publicKey -Encoding ascii
+    }
+    SecurePrivateKey $privateKey
+
+    [pscustomobject]@{
+        Private = $privateKey
+        Public = $publicKey
     }
 }
 
@@ -66,7 +105,7 @@ function WindowsIso($cfg, $cacheDir) {
     return $iso
 }
 
-function InstallMedia($cfg, $baseDir, $windowsIso) {
+function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey) {
     $dir = Join-Path $baseDir "answer"
     $installIso = Join-Path $baseDir "$($cfg.vmName)-install.iso"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -74,6 +113,9 @@ function InstallMedia($cfg, $baseDir, $windowsIso) {
     $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     Set-Content -LiteralPath (Join-Path $dir "packages.txt") -Value $packages -Encoding UTF8
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "bootstrap-windows.ps1") -Destination $dir -Force
+    if ($sshKey) {
+        Copy-Item -LiteralPath $sshKey.Public -Destination (Join-Path $dir "ssh_authorized_key.pub") -Force
+    }
 
     $xml = Get-Content -Raw (Join-Path $PSScriptRoot "templates\windows11-autounattend.xml")
     $xml = $xml.Replace("{{VM_NAME}}", (Xml $cfg.vmName))
@@ -99,8 +141,7 @@ function InstallMedia($cfg, $baseDir, $windowsIso) {
 }
 
 function WaitForReady($cfg) {
-    $password = ConvertTo-SecureString $cfg.password -AsPlainText -Force
-    $credential = [pscredential]::new($cfg.user, $password)
+    $credential = GuestCredential $cfg
     $deadline = (Get-Date).AddMinutes(90)
 
     while ((Get-Date) -lt $deadline) {
@@ -122,6 +163,46 @@ function WaitForReady($cfg) {
     }
 
     throw "VM did not become ready within 90 minutes."
+}
+
+function InitializeDataDisk($cfg, $dataVhd, $bitLockerPassword) {
+    if ((Number $cfg.dataDiskGB) -le 0) { return }
+
+    New-VHD -Path $dataVhd -SizeBytes ([int64]$cfg.dataDiskGB * 1GB) -Dynamic | Out-Null
+    Add-VMHardDiskDrive -VMName $cfg.vmName -Path $dataVhd | Out-Null
+
+    Invoke-Command -VMName $cfg.vmName -Credential (GuestCredential $cfg) -ArgumentList $cfg.dataDiskLetter, $cfg.dataDiskLabel, ([bool]$cfg.dataDiskBitLocker), $bitLockerPassword -ScriptBlock {
+        param($letter, $label, $useBitLocker, $bitLockerPassword)
+
+        $letter = ([string]$letter).TrimEnd(":")
+        $mountPoint = "${letter}:"
+        for ($i = 0; $i -lt 30; $i++) {
+            Update-HostStorageCache -ErrorAction SilentlyContinue
+            $disk = Get-Disk | Where-Object PartitionStyle -eq "RAW" | Sort-Object Number | Select-Object -First 1
+            if ($disk) { break }
+            Start-Sleep -Seconds 2
+        }
+        if (-not $disk) { throw "Data disk did not appear in the guest." }
+
+        Initialize-Disk -Number $disk.Number -PartitionStyle GPT
+        $partition = New-Partition -DiskNumber $disk.Number -DriveLetter $letter -UseMaximumSize
+        Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel $label -Confirm:$false | Out-Null
+
+        if ($useBitLocker) {
+            $secure = ConvertTo-SecureString $bitLockerPassword -AsPlainText -Force
+            Enable-BitLocker -MountPoint $mountPoint -PasswordProtector -Password $secure -UsedSpaceOnly -SkipHardwareTest
+            Resume-BitLocker -MountPoint $mountPoint
+            for ($i = 0; $i -lt 60; $i++) {
+                $volume = Get-BitLockerVolume -MountPoint $mountPoint
+                if ($volume.ProtectionStatus -eq "On" -and $volume.VolumeStatus -ne "EncryptionInProgress") { break }
+                Start-Sleep -Seconds 5
+            }
+            $volume = Get-BitLockerVolume -MountPoint $mountPoint
+            if ($volume.ProtectionStatus -ne "On") { throw "BitLocker did not enable on $mountPoint." }
+        }
+
+        Get-Volume -DriveLetter $letter | Select-Object DriveLetter, FileSystemLabel, Size
+    } | Out-Host
 }
 
 function HostDisplay {
@@ -158,6 +239,11 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     memoryGB = 8
     cpuCount = 4
     diskGB = 100
+    dataDiskGB = 24
+    dataDiskLetter = "W"
+    dataDiskLabel = "WorkData"
+    dataDiskBitLocker = $true
+    sshEnabled = $true
     displayWidth = ""
     displayHeight = ""
     recreate = $false
@@ -170,22 +256,34 @@ $baseDir = FullPath $cfg.baseDir
 $cacheDir = FullPath $cfg.imageCacheDir
 $vmDir = Join-Path $baseDir "vm"
 $vhd = Join-Path $vmDir "$($cfg.vmName).vhdx"
+$dataVhd = Join-Path $vmDir "$($cfg.vmName)-data.vhdx"
 
 New-Item -ItemType Directory -Force -Path $baseDir, $cacheDir, $vmDir | Out-Null
 
 $existingVm = Get-VM -Name $cfg.vmName -ErrorAction SilentlyContinue
 $existingDisk = Test-Path $vhd
+$existingDataDisk = Test-Path $dataVhd
 if ([bool]$cfg.recreate) {
     RemoveVm $cfg.vmName
     if ($existingDisk) { Remove-Item -LiteralPath $vhd -Force }
-} elseif ($existingVm -or $existingDisk) {
+    if ($existingDataDisk) { Remove-Item -LiteralPath $dataVhd -Force }
+} elseif ($existingVm -or $existingDisk -or $existingDataDisk) {
     throw "VM or disk already exists. Set recreate to true only when you intentionally want to replace it."
 }
 
-Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value "User: $($cfg.user)`nPassword: $($cfg.password)`n"
+$bitLockerPassword = ""
+if ((Number $cfg.dataDiskGB) -gt 0 -and [bool]$cfg.dataDiskBitLocker) { $bitLockerPassword = BitLockerPassword }
+$sshKey = EnsureSshKey $cfg $baseDir
+
+$credentialText = @("User: $($cfg.user)", "Password: $($cfg.password)")
+if ($bitLockerPassword) {
+    $credentialText += "DataDisk: $($cfg.dataDiskLetter):"
+    $credentialText += "DataDiskBitLockerPassword: $bitLockerPassword"
+}
+Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value $credentialText
 
 $windowsIso = WindowsIso $cfg $cacheDir
-$media = InstallMedia $cfg $baseDir $windowsIso
+$media = InstallMedia $cfg $baseDir $windowsIso $sshKey
 
 New-VHD -Path $vhd -SizeBytes ([int64]$cfg.diskGB * 1GB) -Dynamic | Out-Null
 New-VM -Name $cfg.vmName -Generation 2 -MemoryStartupBytes ([int64]$cfg.memoryGB * 1GB) -VHDPath $vhd -SwitchName $cfg.switchName | Out-Null
@@ -213,5 +311,6 @@ Set-VMFirmware -VMName $cfg.vmName -FirstBootDevice $bootDvd
 Start-VM -Name $cfg.vmName
 
 $ready = WaitForReady $cfg
+InitializeDataDisk $cfg $dataVhd $bitLockerPassword
 Get-VM -Name $cfg.vmName | Select-Object Name, State, ProcessorCount, MemoryAssigned
 Write-Host "Guest ready: $($ready.ComputerName)"

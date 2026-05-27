@@ -48,23 +48,18 @@ jobs:
       - name: Prepare host
         run: .\prepare-host.ps1
 
-      - name: Prepare Hyper-V network
-        run: |
-          Import-Module Hyper-V
-          if (-not (Get-VMSwitch -Name "workstation-ci" -ErrorAction SilentlyContinue)) {
-            New-VMSwitch -Name "workstation-ci" -SwitchType Internal | Out-Null
-          }
-
       - name: Prepare CI config
         run: |
           $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
           $cfg.vmName = "ci-Windows11"
           $cfg.password = "Workstation123!"
-          $cfg.switchName = "workstation-ci"
+          $cfg.switchName = "Default Switch"
           $cfg.baseDir = "$env:RUNNER_TEMP/workstation-vm/windows11"
           $cfg.imageCacheDir = "$env:RUNNER_TEMP/workstation-image-cache/windows"
           $cfg.memoryGB = 2
           $cfg.cpuCount = 2
+          $cfg.dataDiskGB = 1
+          $cfg.sshEnabled = $true
           $cfg.recreate = $true
           $cfg.wingetPackages = @()
           $cfg | ConvertTo-Json -Depth 5 | Set-Content config/windows.json
@@ -74,6 +69,10 @@ jobs:
 
       - name: Check VM
         run: .\check-workstation-vm.ps1 --config config/windows.json
+
+      - name: SSH hello
+        run: >
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json; $ip = @(Get-VMNetworkAdapter -VMName $cfg.vmName | Select-Object -ExpandProperty IPAddresses | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notlike '169.254.*' -and $_ -ne '0.0.0.0' } | Select-Object -First 1)[0]; ssh -i (Join-Path $cfg.baseDir "ssh_key_ed25519.key") -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "$($cfg.user)@$ip" "echo hello"
 
       - name: Collect state
         if: always()

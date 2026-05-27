@@ -37,6 +37,15 @@ function EnableFeature($name) {
     }
 }
 
+function EnableCapability($pattern) {
+    $capability = Get-WindowsCapability -Online |
+        Where-Object Name -like $pattern |
+        Select-Object -First 1
+    if ($capability -and $capability.State -ne "Installed") {
+        Add-WindowsCapability -Online -Name $capability.Name | Out-Null
+    }
+}
+
 function HyperVGroup {
     $sid = [Security.Principal.SecurityIdentifier]"S-1-5-32-578"
     $sid.Translate([Security.Principal.NTAccount]).Value.Split("\")[-1]
@@ -47,6 +56,7 @@ $groupChanged = $false
 
 AssertFirmwareVirtualization
 EnableFeature "Microsoft-Hyper-V-All"
+EnableCapability "OpenSSH.Client*"
 & bcdedit.exe /set hypervisorlaunchtype auto | Out-Null
 Set-VMHost -EnableEnhancedSessionMode $true
 

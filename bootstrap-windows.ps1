@@ -40,6 +40,38 @@ function TunePowerPlan {
     powercfg /setactive SCHEME_MIN | Out-Null
 }
 
+function EnableSshServer($authorizedKeyPath) {
+    if (-not (Test-Path -LiteralPath $authorizedKeyPath)) { return }
+
+    try {
+        $capability = Get-WindowsCapability -Online |
+            Where-Object Name -like "OpenSSH.Server*" |
+            Select-Object -First 1
+        if (-not $capability) { throw "OpenSSH Server capability was not found." }
+        if ($capability.State -ne "Installed") {
+            Add-WindowsCapability -Online -Name $capability.Name -ErrorAction Stop | Out-Null
+        }
+
+        $sshDir = Join-Path $env:ProgramData "ssh"
+        New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+        $adminKeys = Join-Path $sshDir "administrators_authorized_keys"
+        Get-Content -LiteralPath $authorizedKeyPath | Set-Content -LiteralPath $adminKeys -Encoding ascii
+        & icacls.exe $adminKeys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F" | Out-Null
+
+        Set-Service -Name sshd -StartupType Automatic -ErrorAction Stop
+        Start-Service -Name sshd -ErrorAction Stop
+        if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Profile Any | Out-Null
+        } else {
+            Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True -Profile Any | Out-Null
+        }
+    } catch {
+        "OpenSSH Server setup failed: $_" | Out-File -FilePath $log -Append
+        Stop-Transcript | Out-Null
+        exit 1
+    }
+}
+
 function Shortcut($name, $target) {
     if (-not (Test-Path -LiteralPath $target)) { return }
     $shell = New-Object -ComObject WScript.Shell
@@ -55,6 +87,10 @@ TunePowerPlan
 $media = Get-PSDrive -PSProvider FileSystem |
     Where-Object { Test-Path (Join-Path $_.Root "packages.txt") } |
     Select-Object -First 1
+
+if ($media) {
+    EnableSshServer (Join-Path $media.Root "ssh_authorized_key.pub")
+}
 
 $packages = @()
 if ($media) {

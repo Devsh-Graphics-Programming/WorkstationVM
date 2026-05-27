@@ -1,7 +1,11 @@
 *password*
 *secret*
+credentials.txt
 *.env
 *.key
 *.pem
+ssh_key_*
+*.iso
+*.vhdx
 config/local.json
 tmp/
