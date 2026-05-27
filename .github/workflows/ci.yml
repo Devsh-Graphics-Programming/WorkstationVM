@@ -73,7 +73,7 @@ jobs:
           $cfg.memoryGB = 2
           $cfg.cpuCount = 2
           $cfg.dataDiskGB = 1
-          $cfg.sshEnabled = $true
+          $cfg.sshEnabled = $false
           $cfg | Add-Member -Force NoteProperty guestIpAddress "192.168.240.2"
           $cfg | Add-Member -Force NoteProperty guestPrefixLength 24
           $cfg | Add-Member -Force NoteProperty guestGateway "192.168.240.1"
@@ -97,6 +97,34 @@ jobs:
 
       - name: Check VM
         run: .\check-workstation-vm.ps1 --config config/windows.json
+
+      - name: Enable CI SSH
+        run: |
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          $key = Join-Path $cfg.baseDir "ssh_key_ed25519.key"
+          & ssh-keygen.exe -t ed25519 -N "" -f $key -C "$($cfg.vmName)-ci"
+          $publicKey = Get-Content -Raw "$key.pub"
+          $secure = [Security.SecureString]::new()
+          foreach ($ch in $cfg.password.ToCharArray()) { $secure.AppendChar($ch) }
+          $secure.MakeReadOnly()
+          $credential = [pscredential]::new($cfg.user, $secure)
+          Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList $publicKey -ScriptBlock {
+            param($publicKey)
+            $capability = Get-WindowsCapability -Online | Where-Object Name -like "OpenSSH.Server*" | Select-Object -First 1
+            if ($capability.State -ne "Installed") { Add-WindowsCapability -Online -Name $capability.Name | Out-Null }
+            $sshDir = Join-Path $env:ProgramData "ssh"
+            New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+            $adminKeys = Join-Path $sshDir "administrators_authorized_keys"
+            Set-Content -LiteralPath $adminKeys -Value $publicKey -Encoding ascii
+            & icacls.exe $adminKeys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F" | Out-Null
+            Set-Service -Name sshd -StartupType Automatic
+            Start-Service -Name sshd
+            if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+              New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Profile Any | Out-Null
+            } else {
+              Set-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -Enabled True -Profile Any | Out-Null
+            }
+          }
 
       - name: SSH hello
         run: >
