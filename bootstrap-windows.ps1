@@ -17,11 +17,40 @@ function EnableRemoteDesktop {
         $group = ([Security.Principal.SecurityIdentifier]"S-1-5-32-555").Translate([Security.Principal.NTAccount]).Value.Split("\")[-1]
         Add-LocalGroupMember -Group $group -Member $env:USERNAME -ErrorAction SilentlyContinue
     } catch {
-        "Remote Desktop user setup failed: $_" | Out-File -FilePath $log -Append
+        Write-Output "Remote Desktop user setup failed: $_"
     }
 }
 
+function TuneRemoteDesktop {
+    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations" -Name DWMFRAMEINTERVAL -PropertyType DWord -Value 15 -Force | Out-Null
+
+    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name InteractiveDelay -PropertyType DWord -Value 0 -Force | Out-Null
+
+    New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name AVC444ModePreferred -PropertyType DWord -Value 1 -Force | Out-Null
+
+    New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name SystemResponsiveness -PropertyType DWord -Value 0 -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name NetworkThrottlingIndex -PropertyType DWord -Value 0xffffffff -Force | Out-Null
+}
+
+function TunePowerPlan {
+    powercfg /setactive SCHEME_MIN | Out-Null
+}
+
+function Shortcut($name, $target) {
+    if (-not (Test-Path -LiteralPath $target)) { return }
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "$name.lnk"))
+    $shortcut.TargetPath = $target
+    $shortcut.Save()
+}
+
 EnableRemoteDesktop
+TuneRemoteDesktop
+TunePowerPlan
 
 $media = Get-PSDrive -PSProvider FileSystem |
     Where-Object { Test-Path (Join-Path $_.Root "packages.txt") } |
@@ -46,11 +75,16 @@ if (-not $winget) {
 }
 
 foreach ($package in $packages) {
-    & winget.exe install --id $package --exact --silent --accept-package-agreements --accept-source-agreements
+    & winget.exe install --id $package --exact --source winget --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
-        "Install failed: $package ($LASTEXITCODE)" | Out-File -FilePath $log -Append
+        Write-Output "Install failed: $package ($LASTEXITCODE)"
     }
 }
+
+Shortcut "VS Code" "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
+Shortcut "Git Bash" "C:\Program Files\Git\git-bash.exe"
+Shortcut "WireGuard" "C:\Program Files\WireGuard\wireguard.exe"
+Shortcut "Tor Browser" "$env:LOCALAPPDATA\Programs\Tor Browser\Browser\firefox.exe"
 
 "Done" | Set-Content -LiteralPath (Join-Path $root "bootstrap.done")
 Stop-Transcript | Out-Null

@@ -27,6 +27,11 @@ function Xml($text) {
     [Security.SecurityElement]::Escape([string]$text)
 }
 
+function Number($value) {
+    if ([string]::IsNullOrWhiteSpace([string]$value)) { return 0 }
+    return [int]$value
+}
+
 function RemoveVm($name) {
     $vm = Get-VM -Name $name -ErrorAction SilentlyContinue
     if ($vm) {
@@ -119,6 +124,24 @@ function WaitForReady($cfg) {
     throw "VM did not become ready within 90 minutes."
 }
 
+function HostDisplay {
+    $mode = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+        Where-Object { $_.CurrentHorizontalResolution -and $_.CurrentVerticalResolution } |
+        Sort-Object { [int64]$_.CurrentHorizontalResolution * [int64]$_.CurrentVerticalResolution } -Descending |
+        Select-Object -First 1
+    if ($mode) {
+        return [pscustomobject]@{ Width = [int]$mode.CurrentHorizontalResolution; Height = [int]$mode.CurrentVerticalResolution }
+    }
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        return [pscustomobject]@{ Width = $bounds.Width; Height = $bounds.Height }
+    } catch {
+        return [pscustomobject]@{ Width = 0; Height = 0 }
+    }
+}
+
 $configPath = ArgValue "config"
 if ([string]::IsNullOrWhiteSpace($configPath)) {
     throw "Usage: .\create-workstation-vm.ps1 --config config\windows.json"
@@ -135,8 +158,10 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     memoryGB = 8
     cpuCount = 4
     diskGB = 100
+    displayWidth = ""
+    displayHeight = ""
     recreate = $false
-    wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard")
+    wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard", "TorProject.TorBrowser")
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
 
 if ([string]::IsNullOrWhiteSpace($cfg.password)) { $cfg.password = Password }
@@ -168,8 +193,20 @@ Set-VMProcessor -VMName $cfg.vmName -Count ([int]$cfg.cpuCount)
 Set-VMMemory -VMName $cfg.vmName -DynamicMemoryEnabled $false
 Set-VMFirmware -VMName $cfg.vmName -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows
 Set-VM -Name $cfg.vmName -AutomaticCheckpointsEnabled $false -CheckpointType Standard
+Set-VM -Name $cfg.vmName -EnhancedSessionTransportType VMBus
 Set-VMKeyProtector -VMName $cfg.vmName -NewLocalKeyProtector
 Enable-VMTPM -VMName $cfg.vmName
+
+$displayWidth = Number $cfg.displayWidth
+$displayHeight = Number $cfg.displayHeight
+if (($displayWidth -le 0) -or ($displayHeight -le 0)) {
+    $display = HostDisplay
+    if ($displayWidth -le 0) { $displayWidth = $display.Width }
+    if ($displayHeight -le 0) { $displayHeight = $display.Height }
+}
+if (($displayWidth -gt 0) -and ($displayHeight -gt 0)) {
+    Set-VMVideo -VMName $cfg.vmName -ResolutionType Single -HorizontalResolution $displayWidth -VerticalResolution $displayHeight
+}
 
 $bootDvd = Add-VMDvdDrive -VMName $cfg.vmName -Path $media.InstallIso -Passthru
 Set-VMFirmware -VMName $cfg.vmName -FirstBootDevice $bootDvd

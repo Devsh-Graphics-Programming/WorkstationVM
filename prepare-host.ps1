@@ -48,6 +48,7 @@ $groupChanged = $false
 AssertFirmwareVirtualization
 EnableFeature "Microsoft-Hyper-V-All"
 & bcdedit.exe /set hypervisorlaunchtype auto | Out-Null
+Set-VMHost -EnableEnhancedSessionMode $true
 
 $group = HyperVGroup
 $members = Get-LocalGroupMember -Group $group -ErrorAction SilentlyContinue |

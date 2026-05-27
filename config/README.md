@@ -6,6 +6,7 @@ Edit `windows.json` before running `create-workstation-vm.ps1`.
 - `switchName`: keep `Default Switch` for Hyper-V NAT. Use an external or bridged switch only when that is intentional.
 - `baseDir`: stores the VM files, generated install media and `credentials.txt`.
 - `imageCacheDir`: stores the downloaded Windows ISO cache.
+- `displayWidth`, `displayHeight`: leave empty to use the host primary display size. Set both values to force a specific VMConnect resolution.
 - `recreate`: keep `false` by default. Set `true` only when replacing an existing VM and VHD is intentional.
 - `windowsIsoPath`: leave empty to download Windows automatically. Set this to a local `.iso` path to use a manually downloaded image.
 - `windowsRelease`, `windowsEdition`, `windowsLanguage`, `windowsArch`: used only when `windowsIsoPath` is empty.

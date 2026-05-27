@@ -8,6 +8,8 @@
   "memoryGB": 8,
   "cpuCount": 4,
   "diskGB": 64,
+  "displayWidth": "",
+  "displayHeight": "",
   "recreate": false,
   "windowsIsoPath": "",
   "windowsRelease": "Latest",
@@ -18,6 +20,7 @@
   "wingetPackages": [
     "Microsoft.VisualStudioCode",
     "Git.Git",
-    "WireGuard.WireGuard"
+    "WireGuard.WireGuard",
+    "TorProject.TorBrowser"
   ]
 }
