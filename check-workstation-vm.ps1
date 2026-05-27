@@ -1,5 +1,4 @@
 $ErrorActionPreference = "Stop"; $scriptArgs = $args
-Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
 
 function ArgValue($name) {
     for ($i = 0; $i -lt $scriptArgs.Count; $i++) {
