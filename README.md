@@ -10,6 +10,31 @@ The script can download the Windows ISO automatically. You can also download the
 - Virtualization enabled in BIOS/UEFI.
 - Internet access for Windows ISO download, unless `windowsIsoPath` points to an existing local ISO.
 
+## What It Does
+
+- Downloads a Windows 11 ISO if `windowsIsoPath` is empty.
+- Creates a bootable unattended Windows install ISO with built-in Windows APIs.
+- Creates a Generation 2 Hyper-V VM.
+- Sets the VMConnect display size from `displayWidth` and `displayHeight`, or from the host primary display when they are empty.
+- Enables Hyper-V Enhanced Session transport for VMConnect.
+- Installs Windows with an unattended local admin account.
+- Installs VS Code, Git, WireGuard and Tor Browser on first login through `winget`.
+- Adds desktop shortcuts for VS Code, Git Bash, WireGuard and Tor Browser.
+- Enables the RDP server during first login.
+- Tunes the guest RDP/DWM frame interval and power plan for smoother interactive sessions.
+- Waits until the guest finishes bootstrap and is ready to use.
+
+## Important Settings
+
+- Network uses Hyper-V `Default Switch`, which is NAT.
+- Do not change the VM to an external or bridged switch unless that is intentional.
+- Keep VPN profiles, work accounts and work browser sessions inside the VM.
+- Host traffic is separate from VM traffic. The VM gets its own NATed network path.
+- Hyper-V Enhanced Session is enabled for local VMConnect use.
+- Secure Boot and TPM are enabled.
+- Dynamic memory and automatic checkpoints are disabled.
+- No checkpoints are created by default.
+
 ## Prepare Host
 
 Run once from PowerShell **as Administrator**:
@@ -107,28 +132,3 @@ The default Hyper-V network uses NAT, so host traffic and VM traffic stay on sep
 The VM enables the RDP server, Remote Desktop firewall rules and RDP access for the workstation user during first login.
 
 If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](https://github.com/Upinel/BetterRDP) and applying its `.reg` file **on the host, not inside the VM**. It tunes the RDP experience by enabling GPU/RemoteFX policies, 60 FPS capture/DWM settings, AVC444/hardware encode preference, image quality, latency and bandwidth-related registry settings. This is optional and is not vendored here.
-
-## What It Does
-
-- Downloads a Windows 11 ISO if `windowsIsoPath` is empty.
-- Creates a bootable unattended Windows install ISO with built-in Windows APIs.
-- Creates a Generation 2 Hyper-V VM.
-- Sets the VMConnect display size from `displayWidth` and `displayHeight`, or from the host primary display when they are empty.
-- Enables Hyper-V Enhanced Session transport for VMConnect.
-- Installs Windows with an unattended local admin account.
-- Installs VS Code, Git, WireGuard and Tor Browser on first login through `winget`.
-- Adds desktop shortcuts for VS Code, Git Bash, WireGuard and Tor Browser.
-- Enables the RDP server during first login.
-- Tunes the guest RDP/DWM frame interval and power plan for smoother interactive sessions.
-- Waits until the guest finishes bootstrap and is ready to use.
-
-## Important Settings
-
-- Network uses Hyper-V `Default Switch`, which is NAT.
-- Do not change the VM to an external or bridged switch unless that is intentional.
-- Keep VPN profiles, work accounts and work browser sessions inside the VM.
-- Host traffic is separate from VM traffic. The VM gets its own NATed network path.
-- Hyper-V Enhanced Session is enabled for local VMConnect use.
-- Secure Boot and TPM are enabled.
-- Dynamic memory and automatic checkpoints are disabled.
-- No checkpoints are created by default.

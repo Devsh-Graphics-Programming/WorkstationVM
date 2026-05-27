@@ -84,7 +84,7 @@ foreach ($package in $packages) {
 Shortcut "VS Code" "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
 Shortcut "Git Bash" "C:\Program Files\Git\git-bash.exe"
 Shortcut "WireGuard" "C:\Program Files\WireGuard\wireguard.exe"
-Shortcut "Tor Browser" "$env:LOCALAPPDATA\Programs\Tor Browser\Browser\firefox.exe"
+Shortcut "Tor Browser" "$(Join-Path ([Environment]::GetFolderPath("Desktop")) "Tor Browser\Browser\firefox.exe")"
 
 "Done" | Set-Content -LiteralPath (Join-Path $root "bootstrap.done")
 Stop-Transcript | Out-Null
