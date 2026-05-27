@@ -8,7 +8,6 @@ The script can download the Windows ISO automatically. You can also download the
 
 - Windows host with Hyper-V support. Hyper-V requires Windows 10/11 Professional, Enterprise or Education according to [Microsoft's Hyper-V setup docs](https://learn.microsoft.com/virtualization/hyper-v-on-windows/quick-start/enable-hyper-v).
 - Virtualization enabled in BIOS/UEFI. This is usually named Intel VT-x, Intel Virtualization Technology, AMD-V or SVM.
-- Windows OpenSSH client on the host for generated SSH key support. The prepare script installs it if needed.
 - Internet access for Windows ISO download, unless `windowsIsoPath` points to an existing local ISO.
 
 ## What It Does
@@ -151,6 +150,8 @@ The setup generates an SSH key pair under `baseDir`:
 - Public key: `ssh_key_ed25519.key.pub`
 
 The public key is installed inside the VM for the workstation admin user. The private key stays on the host next to `credentials.txt`.
+
+For long-lived keys, consider using a password manager with an SSH agent. For example, 1Password can serve keys through its SSH agent so a private key does not need to stay as a plain file on the filesystem.
 
 Get the VM IP address from PowerShell:
 

@@ -58,6 +58,10 @@ function SecurePrivateKey($path) {
     & icacls.exe $path /inheritance:r /grant:r "${user}:F" | Out-Null
 }
 
+function CmdQuote($text) {
+    '"' + ([string]$text).Replace('"', '') + '"'
+}
+
 function EnsureSshKey($cfg, $baseDir) {
     if (-not [bool]$cfg.sshEnabled) { return $null }
 
@@ -65,8 +69,10 @@ function EnsureSshKey($cfg, $baseDir) {
     $publicKey = "$privateKey.pub"
     if (-not (Test-Path -LiteralPath $privateKey)) {
         $sshKeygen = Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue
-        if (-not $sshKeygen) { throw "ssh-keygen.exe was not found. Install the Windows OpenSSH client." }
-        & $sshKeygen.Source -t ed25519 -N "" -f $privateKey -C "$($cfg.vmName)-workstation" | Out-Null
+        if (-not $sshKeygen) { throw "ssh-keygen.exe was not found. Run .\prepare-host.ps1 as Administrator first." }
+        $command = "$(CmdQuote $sshKeygen.Source) -t ed25519 -N """" -f $(CmdQuote $privateKey) -C $(CmdQuote "$($cfg.vmName)-workstation")"
+        & cmd.exe /d /c $command | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $privateKey)) { throw "SSH key generation failed." }
     }
     if (-not (Test-Path -LiteralPath $publicKey)) {
         & (Get-Command ssh-keygen.exe).Source -y -f $privateKey | Set-Content -LiteralPath $publicKey -Encoding ascii
