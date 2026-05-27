@@ -2,11 +2,13 @@
 
 Minimal Windows 11 Hyper-V workstation VM setup.
 
+The script can download the Windows ISO automatically. You can also download the ISO yourself and set `windowsIsoPath` in `config\windows.json` before running the script.
+
 ## Requirements
 
 - Windows host with Hyper-V support.
 - Virtualization enabled in BIOS/UEFI.
-- Internet access for Windows ISO download.
+- Internet access for Windows ISO download, unless `windowsIsoPath` points to an existing local ISO.
 
 ## Prepare Host
 
@@ -36,6 +38,21 @@ The generated login is written to:
 ```text
 $HOME\VMs\WorkstationWindows11\credentials.txt
 ```
+
+The file contains the VM username and password. Hyper-V Manager may reconnect to the active local session without asking, but use this login for RDP, PowerShell Direct or manual sign-in when needed.
+Print it from PowerShell with:
+
+```powershell
+Get-Content -LiteralPath "$HOME\VMs\WorkstationWindows11\credentials.txt"
+```
+
+When the script finishes successfully, the VM is ready to use and the output looks like this:
+
+![Ready VM output](misc/vmready.png)
+
+Open Hyper-V Manager, then double-click the VM to open the interactive VM window:
+
+![Hyper-V Manager VM window](misc/hypervmanager.png)
 
 Check the VM:
 
