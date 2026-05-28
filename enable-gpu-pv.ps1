@@ -202,6 +202,17 @@ function PackageDestination($packageRoot, $destination) {
     return Join-Path $packageRoot $Matches[1]
 }
 
+function GetWmiObjects($class) {
+    for ($i = 0; $i -lt 5; $i++) {
+        try {
+            return @(Get-WmiObject $class -ErrorAction Stop)
+        } catch {
+            if ($i -eq 4) { throw }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
 function CopyDirectoryContents($packageRoot, $source, $destination) {
     $target = PackageDestination $packageRoot $destination
     New-Item -ItemType Directory -Force -Path $target | Out-Null
@@ -215,17 +226,18 @@ function CopyFileToPackage($packageRoot, $source, $destination) {
 }
 
 function CopyGpuDrivers($packageRoot, $guestRoot, $gpu) {
-    $drivers = @(Get-WmiObject Win32_PNPSignedDriver | Where-Object {
+    $drivers = @(GetWmiObjects Win32_PNPSignedDriver | Where-Object {
         $_.DeviceID -ieq $gpu.PciId -or $_.DeviceName -eq $gpu.Controller.Name
     })
     if ($drivers.Count -eq 0) { throw "Could not find host GPU driver metadata for '$($gpu.Controller.Name)'." }
 
     $copiedDirectories = @{}
     $copiedFiles = 0
+    $allDriverFiles = $null
 
     $pnp = Get-PnpDevice | Where-Object { $_.InstanceId -ieq $gpu.PciId } | Select-Object -First 1
     if ($pnp -and $pnp.Service) {
-        $service = Get-WmiObject Win32_SystemDriver | Where-Object { $_.Name -eq $pnp.Service } | Select-Object -First 1
+        $service = GetWmiObjects Win32_SystemDriver | Where-Object { $_.Name -eq $pnp.Service } | Select-Object -First 1
         if ($service -and $service.PathName) {
             $serviceFile = ([string]$service.PathName).Trim('"')
             if (Test-Path -LiteralPath $serviceFile) {
@@ -244,7 +256,8 @@ function CopyGpuDrivers($packageRoot, $guestRoot, $gpu) {
     foreach ($driver in $drivers) {
         $deviceId = $driver.DeviceID.Replace("\", "\\")
         $antecedent = "\\" + $env:COMPUTERNAME + "\ROOT\cimv2:Win32_PNPSignedDriver.DeviceID=`"$deviceId`""
-        $driverFiles = @(Get-WmiObject Win32_PNPSignedDriverCIMDataFile | Where-Object { $_.Antecedent -eq $antecedent })
+        if ($null -eq $allDriverFiles) { $allDriverFiles = @(GetWmiObjects Win32_PNPSignedDriverCIMDataFile) }
+        $driverFiles = @($allDriverFiles | Where-Object { $_.Antecedent -eq $antecedent })
         foreach ($file in $driverFiles) {
             $sourcePath = ($file.Dependent.Split("=")[1] -replace "\\\\", "\").Trim('"')
             if (-not (Test-Path -LiteralPath $sourcePath)) { continue }

@@ -21,6 +21,7 @@ function SetRegistryValue($path, $name, $type, $value) {
 
 function EnableRemoteDesktop {
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Type DWord -Value 0
+    ConfigureRdpListener
     Set-Service -Name TermService -StartupType Automatic
     Start-Service -Name TermService
 
@@ -35,11 +36,41 @@ function EnableRemoteDesktop {
     }
 }
 
+function WaitRdpListener($seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue) {
+            return $true
+        }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+function RestartRemoteDesktop {
+    Restart-Service -Name TermService -Force -ErrorAction SilentlyContinue
+    Start-Service -Name TermService -ErrorAction Stop
+    if (-not (WaitRdpListener 60)) {
+        throw "Remote Desktop listener did not start on port 3389."
+    }
+}
+
+function ConfigureRdpListener {
+    $rdpTcp = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+    SetRegistryValue $rdpTcp PortNumber DWord 3389
+    SetRegistryValue $rdpTcp fEnableWinStation DWord 1
+    SetRegistryValue $rdpTcp LanAdapter DWord 0
+    SetRegistryValue $rdpTcp UserAuthentication DWord 1
+    SetRegistryValue $rdpTcp SecurityLayer DWord 2
+    SetRegistryValue $rdpTcp MinEncryptionLevel DWord 2
+    SetRegistryValue $rdpTcp LoadableProtocol_Object String "{5828227c-20cf-4408-b73f-73ab70b8849f}"
+}
+
 function TuneRemoteDesktop {
     New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations" -Force | Out-Null
     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations" -Name DWMFRAMEINTERVAL -PropertyType DWord -Value 15 -Force | Out-Null
 
-    New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Force | Out-Null
+    ConfigureRdpListener
     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name InteractiveDelay -PropertyType DWord -Value 0 -Force | Out-Null
 
     New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Force | Out-Null
@@ -156,6 +187,110 @@ function ConfigureNetwork($networkPath) {
     if ($config.dnsServers) {
         Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses @($config.dnsServers) | Out-Null
     }
+}
+
+function PackageValue($package, $name, $default) {
+    if ($package -is [string]) {
+        if ($name -eq "id") { return [string]$package }
+        return $default
+    }
+
+    $property = $package.PSObject.Properties[$name]
+    if ($null -eq $property) { return $default }
+    return $property.Value
+}
+
+function PackageBool($package, $name, $default) {
+    $value = PackageValue $package $name $null
+    if ($null -eq $value) { return $default }
+    return [bool]$value
+}
+
+function ReadWingetPackages($mediaRoot) {
+    $jsonPath = Join-Path $mediaRoot "packages.json"
+    if (Test-Path -LiteralPath $jsonPath) {
+        $items = Get-Content -Raw -LiteralPath $jsonPath | ConvertFrom-Json
+        foreach ($item in $items) { $item }
+        return
+    }
+
+    $txtPath = Join-Path $mediaRoot "packages.txt"
+    if (-not (Test-Path -LiteralPath $txtPath)) { return @() }
+
+    Get-Content -LiteralPath $txtPath |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object {
+            $line = [string]$_
+            $source = "winget"
+            $id = $line
+            if ($line -match '^([^:]+):(.+)$') {
+                $source = $Matches[1]
+                $id = $Matches[2]
+            }
+
+            [pscustomobject]@{
+                id = $id
+                source = $source
+                exact = $true
+                silent = $true
+            }
+        }
+}
+
+function InstallWingetPackage($package) {
+    $id = [string](PackageValue $package "id" "")
+    if ([string]::IsNullOrWhiteSpace($id)) { return }
+
+    $source = [string](PackageValue $package "source" "winget")
+    $name = [string](PackageValue $package "name" $id)
+    if ($source -eq "direct") {
+        return InstallDirectPackage $package $name
+    }
+
+    $override = [string](PackageValue $package "override" "")
+
+    $wingetArgs = @("install", "--id", $id, "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
+    if (-not [string]::IsNullOrWhiteSpace($source)) { $wingetArgs += @("--source", $source) }
+    if (PackageBool $package "exact" $true) { $wingetArgs += "--exact" }
+    if (PackageBool $package "silent" $true) { $wingetArgs += "--silent" }
+    if (-not [string]::IsNullOrWhiteSpace($override)) { $wingetArgs += @("--override", $override) }
+
+    Write-Output "Installing package: $name"
+    & winget.exe @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "Install failed: $name ($LASTEXITCODE)"
+        return $false
+    }
+    return $true
+}
+
+function InstallDirectPackage($package, $name) {
+    $url = [string](PackageValue $package "url" "")
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        Write-Output "Install failed: $name (missing url)"
+        return $false
+    }
+
+    $silentArgs = [string](PackageValue $package "silentArgs" "/S")
+    $fileName = [IO.Path]::GetFileName(([Uri]$url).AbsolutePath)
+    if ([string]::IsNullOrWhiteSpace($fileName)) { $fileName = "$([guid]::NewGuid().ToString("N")).exe" }
+    $installer = Join-Path $env:TEMP $fileName
+
+    Write-Output "Installing package: $name"
+    Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing -ErrorAction Stop
+    $process = Start-Process -FilePath $installer -ArgumentList $silentArgs -Wait -PassThru
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+    if ($process.ExitCode -ne 0) {
+        Write-Output "Install failed: $name ($($process.ExitCode))"
+        return $false
+    }
+
+    $checkPath = [string](PackageValue $package "checkPath" "")
+    if (-not [string]::IsNullOrWhiteSpace($checkPath) -and -not (Test-Path -LiteralPath $checkPath)) {
+        Write-Output "Install failed: $name (missing $checkPath)"
+        return $false
+    }
+    return $true
 }
 
 function EnableSshServer($authorizedKeyPath) {
@@ -499,21 +634,24 @@ if ($media) {
     $bootstrapConfig = ReadBootstrapConfig (Join-Path $media.Root "bootstrap-config.json")
 }
 
+Write-Output "Configuring Remote Desktop"
 EnableRemoteDesktop
 TuneRemoteDesktop
+RestartRemoteDesktop
+Write-Output "Configuring power and lock policy"
 TunePowerPlan
 DisableAutomaticLock
 EnablePersistentAutoLogon $bootstrapConfig
 
 if ($media) {
+    Write-Output "Configuring network and SSH"
     ConfigureNetwork (Join-Path $media.Root "network.json")
     EnableSshServer (Join-Path $media.Root "ssh_authorized_key.pub")
 }
 
 $packages = @()
 if ($media) {
-    $packages = Get-Content -LiteralPath (Join-Path $media.Root "packages.txt") |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $packages = @(ReadWingetPackages $media.Root)
 }
 
 if ($packages.Count -gt 0) {
@@ -529,11 +667,16 @@ if ($packages.Count -gt 0) {
         exit 1
     }
 
+    $failedPackages = @()
     foreach ($package in $packages) {
-        & winget.exe install --id $package --exact --source winget --silent --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) {
-            Write-Output "Install failed: $package ($LASTEXITCODE)"
+        if (-not (InstallWingetPackage $package)) {
+            $failedPackages += [string](PackageValue $package "name" (PackageValue $package "id" "unknown"))
         }
+    }
+    if ($failedPackages.Count -gt 0) {
+        "Package install failures: $($failedPackages -join ', ')" | Out-File -FilePath $log -Append
+        Stop-Transcript | Out-Null
+        exit 1
     }
 }
 
@@ -541,6 +684,9 @@ Shortcut "VS Code" "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
 Shortcut "Git Bash" "C:\Program Files\Git\git-bash.exe"
 Shortcut "WireGuard" "C:\Program Files\WireGuard\wireguard.exe"
 Shortcut "Tor Browser" "$(Join-Path ([Environment]::GetFolderPath("Desktop")) "Tor Browser\Browser\firefox.exe")"
+Shortcut "Google Chrome" "C:\Program Files\Google\Chrome\Application\chrome.exe"
+Shortcut "Visual Studio 2026" "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\devenv.exe"
+Shortcut "ThinLinc Client" "C:\Program Files\ThinLinc client\tlclient.exe"
 
 "Done" | Set-Content -LiteralPath (Join-Path $root "bootstrap.done")
 Stop-Transcript | Out-Null

@@ -20,9 +20,10 @@ The script can download the Windows ISO automatically. You can also download the
 - Installs Windows with an unattended local admin account.
 - Keeps the workstation account signed in automatically after boot.
 - Disables guest sleep, hibernation, display timeout, screensaver lock and idle session lock.
-- Installs VS Code, Git, WireGuard and Tor Browser on first login through `winget`.
-- Adds desktop shortcuts for VS Code, Git Bash, WireGuard and Tor Browser.
+- Installs VS Code, Git, WireGuard, Tor Browser, Chrome, Outlook, Visual Studio Community 2026 with the C++ desktop workload, CMake, Python 3, TortoiseGit and ThinLinc Client on first login.
+- Adds desktop shortcuts for common GUI tools.
 - Enables the RDP server during first login.
+- Writes an `.rdp` shortcut file on the host for double-click RDP access.
 - Tunes the guest RDP/DWM frame interval and power plan for smoother interactive sessions.
 - Creates a second dynamic data disk, formats it as `W:` and enables BitLocker on it.
 - Generates an SSH key and enables OpenSSH Server inside the VM for the workstation user.
@@ -94,7 +95,7 @@ The generated login is written to:
 $HOME\VMs\WorkstationWindows11\credentials.txt
 ```
 
-The file contains the VM username, password and data disk BitLocker password. VMConnect should reconnect to the already unlocked local session after the guest boots. Use this login for RDP, PowerShell Direct or manual sign-in when needed.
+The file contains the VM username, password and data disk BitLocker password. VMConnect should reconnect to the already unlocked local session after the guest boots. Use this login for Hyper-V Connect, RDP, PowerShell Direct or manual sign-in when needed.
 When Moonlight streaming is enabled, the same file also contains the Sunshine web UI login, Moonlight host address and Sunshine web UI URL.
 Print it from PowerShell with:
 
@@ -106,7 +107,7 @@ When the script finishes successfully, the VM is ready to use and the output loo
 
 ![Ready VM output](misc/vmready.png)
 
-Open Hyper-V Manager, then double-click the VM to open the interactive VM window:
+Open Hyper-V Manager, then double-click the VM to open the interactive VM window. Hyper-V Connect, RDP and Moonlight are all supported so you can use whichever connection path fits the current workflow:
 
 ![Hyper-V Manager VM window](misc/hypervmanager.png)
 
@@ -261,9 +262,21 @@ The default Hyper-V network uses NAT, so host traffic and VM traffic stay on sep
 
 The VM enables the RDP server, Remote Desktop firewall rules and RDP access for the workstation user during first login.
 
+The create script writes an RDP shortcut on the host:
+
+```text
+$HOME\VMs\WorkstationWindows11\WorkstationW11.rdp
+```
+
+Double-click that file to connect with `mstsc.exe`. The file contains the current VM IP and username, but it does not store the VM password. If the VM IP changes, refresh the file manually:
+
+```powershell
+.\write-rdp-file.ps1 --config config\windows.json
+```
+
 If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](https://github.com/Upinel/BetterRDP) and applying its `.reg` file **on the host, not inside the VM**. It tunes the RDP experience by enabling GPU/RemoteFX policies, 60 FPS capture/DWM settings, AVC444/hardware encode preference, image quality, latency and bandwidth-related registry settings. This is optional and is not vendored here.
 
-## Moonlight Streaming (Optional If You Want More Than 60 FPS)
+## Moonlight Streaming (OPTIONAL if you want more than 60 FPS)
 
 The default `config\windows.json` enables a local Sunshine endpoint for Moonlight:
 

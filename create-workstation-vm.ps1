@@ -26,8 +26,39 @@ function ChildConfig($cfg, $name) {
     return $cfg.$name
 }
 
+function Log($message) {
+    Write-Host "[$(Get-Date -Format HH:mm:ss)] $message"
+}
+
 function Password {
     -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+}
+
+function WingetPackage($package) {
+    if ($package -is [string]) {
+        if ([string]::IsNullOrWhiteSpace($package)) { return $null }
+        return [pscustomobject]@{
+            id = [string]$package
+            source = "winget"
+            exact = $true
+            silent = $true
+        }
+    }
+
+    $id = [string]$package.id
+    if ([string]::IsNullOrWhiteSpace($id)) { return $null }
+
+    [ordered]@{
+        id = $id
+        source = if ([string]::IsNullOrWhiteSpace([string]$package.source)) { "winget" } else { [string]$package.source }
+        name = if ([string]::IsNullOrWhiteSpace([string]$package.name)) { $id } else { [string]$package.name }
+        exact = if ($null -eq $package.PSObject.Properties["exact"]) { $true } else { [bool]$package.exact }
+        silent = if ($null -eq $package.PSObject.Properties["silent"]) { $true } else { [bool]$package.silent }
+        override = if ($null -eq $package.PSObject.Properties["override"]) { "" } else { [string]$package.override }
+        url = if ($null -eq $package.PSObject.Properties["url"]) { "" } else { [string]$package.url }
+        silentArgs = if ($null -eq $package.PSObject.Properties["silentArgs"]) { "" } else { [string]$package.silentArgs }
+        checkPath = if ($null -eq $package.PSObject.Properties["checkPath"]) { "" } else { [string]$package.checkPath }
+    }
 }
 
 function GpuConfig($cfg) {
@@ -73,7 +104,7 @@ function ResolveStreamingDisplay($streaming, $displayWidth, $displayHeight) {
 }
 
 function WingetPackages($cfg, $streaming) {
-    $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $packages = @($cfg.wingetPackages)
     if ([bool]$streaming.enabled) {
         if ([bool]$streaming.installVirtualDisplayDriver) { $packages += "Microsoft.VCRedist.2015+.x64" }
         if ([bool]$streaming.installSunshine) { $packages += "LizardByte.Sunshine" }
@@ -81,10 +112,13 @@ function WingetPackages($cfg, $streaming) {
 
     $seen = @{}
     foreach ($package in $packages) {
-        $key = ([string]$package).ToLowerInvariant()
+        $entry = WingetPackage $package
+        if (-not $entry) { continue }
+
+        $key = "$($entry.source)|$($entry.id)".ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
-        $package
+        $entry
     }
 }
 
@@ -161,7 +195,10 @@ function WindowsIso($cfg, $cacheDir) {
     if (-not [string]::IsNullOrWhiteSpace($cfg.windowsIsoPath)) { return FullPath $cfg.windowsIsoPath }
 
     $iso = Join-Path $cacheDir "windows11.iso"
-    if (Test-Path $iso) { return $iso }
+    if (Test-Path $iso) {
+        Log "Using cached Windows ISO: $iso"
+        return $iso
+    }
 
     $fido = Join-Path $PSScriptRoot "vendor\Fido.ps1"
     if (-not (Test-Path $fido)) { throw "Missing vendor\Fido.ps1." }
@@ -179,6 +216,7 @@ function WindowsIso($cfg, $cacheDir) {
     $url = & powershell.exe @args | Where-Object { $_ -match '^https://.+\.iso(\?|$)' } | Select-Object -First 1
     if (-not $url) { throw "Could not resolve Windows ISO URL." }
 
+    Log "Downloading Windows ISO to $iso"
     Invoke-WebRequest -Uri $url -OutFile $iso
     return $iso
 }
@@ -189,7 +227,12 @@ function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey, $streaming) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
     $packages = @(WingetPackages $cfg $streaming)
-    Set-Content -LiteralPath (Join-Path $dir "packages.txt") -Value $packages -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $dir "packages.txt") -Value @($packages | ForEach-Object { "$($_.source):$($_.id)" }) -Encoding UTF8
+    if ($packages.Count -eq 0) {
+        "[]" | Set-Content -LiteralPath (Join-Path $dir "packages.json") -Encoding UTF8
+    } else {
+        $packages | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $dir "packages.json") -Encoding UTF8
+    }
     [ordered]@{
         autoLogonUser = $cfg.user
         autoLogonPassword = $cfg.password
@@ -246,29 +289,67 @@ function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey, $streaming) {
     }
 }
 
+function ProbeGuestReady($cfg) {
+    $probe = {
+        param($vmName, $user, $password)
+
+        $secure = [Security.SecureString]::new()
+        foreach ($ch in ([string]$password).ToCharArray()) { $secure.AppendChar($ch) }
+        $secure.MakeReadOnly()
+        $credential = [pscredential]::new($user, $secure)
+
+        Invoke-Command -VMName $vmName -Credential $credential -ScriptBlock {
+            $rdp = (Get-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server").fDenyTSConnections -eq 0
+            $rdpPort = [bool](Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue)
+            [pscustomobject]@{
+                ComputerName = $env:COMPUTERNAME
+                BootstrapDone = Test-Path "C:\WorkstationVM\bootstrap.done"
+                RdpEnabled = $rdp
+                RdpListening = $rdpPort
+            }
+        } -ErrorAction Stop
+    }
+
+    $job = Start-Job -ScriptBlock $probe -ArgumentList $cfg.vmName, $cfg.user, $cfg.password
+    try {
+        $done = Wait-Job -Job $job -Timeout 20
+        if (-not $done) { return $null }
+        return Receive-Job -Job $job -ErrorAction Stop
+    } catch {
+        return $null
+    } finally {
+        Stop-Job -Job $job -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function WaitForReady($cfg) {
-    $credential = GuestCredential $cfg
-    $deadline = (Get-Date).AddMinutes(90)
+    $start = Get-Date
+    $timeoutMinutes = Number $cfg.bootstrapTimeoutMinutes
+    if ($timeoutMinutes -le 0) { $timeoutMinutes = 180 }
+    $deadline = (Get-Date).AddMinutes($timeoutMinutes)
+    $attempt = 0
 
     while ((Get-Date) -lt $deadline) {
-        try {
-            $state = Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
-                $rdp = (Get-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server").fDenyTSConnections -eq 0
-                [pscustomobject]@{
-                    ComputerName = $env:COMPUTERNAME
-                    BootstrapDone = Test-Path "C:\WorkstationVM\bootstrap.done"
-                    RdpEnabled = $rdp
-                }
-            } -ErrorAction Stop
+        $attempt++
+        $elapsed = [math]::Round(((Get-Date) - $start).TotalMinutes, 1)
+        $percent = [math]::Min(99, [int](((Get-Date) - $start).TotalSeconds / ($timeoutMinutes * 60) * 100))
+        Write-Progress -Activity "Waiting for VM bootstrap" -Status "$elapsed minutes elapsed" -PercentComplete $percent
+        if (($attempt -eq 1) -or ($attempt % 2 -eq 0)) {
+            Log "Waiting for guest bootstrap to finish ($elapsed min elapsed)"
+        }
 
-            if ($state.BootstrapDone -and $state.RdpEnabled) { return $state }
-        } catch {
+        $state = ProbeGuestReady $cfg
+        if ($state -and $state.BootstrapDone -and $state.RdpEnabled -and $state.RdpListening) {
+            Write-Progress -Activity "Waiting for VM bootstrap" -Completed
+            Log "Guest bootstrap is complete and RDP is listening"
+            return $state
         }
 
         Start-Sleep -Seconds 30
     }
 
-    throw "VM did not become ready within 90 minutes."
+    throw "VM did not become ready within $timeoutMinutes minutes."
 }
 
 function InitializeDataDisk($cfg, $dataVhd, $bitLockerPassword) {
@@ -341,6 +422,17 @@ function WriteConnectionInfo($cfg, $streaming, $baseDir) {
         "MoonlightHost: $ip",
         "SunshineWebUi: https://${ip}:$webPort"
     )
+}
+
+function WriteRdpFile($configPath) {
+    $script = Join-Path $PSScriptRoot "write-rdp-file.ps1"
+    if (-not (Test-Path -LiteralPath $script)) { return }
+
+    try {
+        & $script --config $configPath
+    } catch {
+        Write-Warning "RDP file was not written: $_"
+    }
 }
 
 function WriteGpuPvConfig($cfg, $gpu, $baseDir) {
@@ -433,11 +525,13 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     sshEnabled = $true
     displayWidth = ""
     displayHeight = ""
+    bootstrapTimeoutMinutes = 180
     recreate = $false
     wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard", "TorProject.TorBrowser")
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
 
 if ([string]::IsNullOrWhiteSpace($cfg.password)) { $cfg.password = Password }
+Log "Preparing workstation VM '$($cfg.vmName)'"
 
 $gpu = GpuConfig $cfg
 $streaming = RemoteStreamingConfig $cfg
@@ -459,11 +553,13 @@ $dataVhd = Join-Path $vmDir "$($cfg.vmName)-data.vhdx"
 $gpuPvState = Join-Path $vmDir "gpu-pv-state.json"
 
 New-Item -ItemType Directory -Force -Path $baseDir, $cacheDir, $vmDir | Out-Null
+Log "Using base directory: $baseDir"
 
 $existingVm = Get-VM -Name $cfg.vmName -ErrorAction SilentlyContinue
 $existingDisk = Test-Path $vhd
 $existingDataDisk = Test-Path $dataVhd
 if ([bool]$cfg.recreate) {
+    Log "Recreate requested. Removing existing VM and disks if present"
     RemoveVm $cfg.vmName
     if ($existingDisk) { Remove-Item -LiteralPath $vhd -Force }
     if ($existingDataDisk) { Remove-Item -LiteralPath $dataVhd -Force }
@@ -474,6 +570,7 @@ if ([bool]$cfg.recreate) {
 
 $bitLockerPassword = ""
 if ((Number $cfg.dataDiskGB) -gt 0 -and [bool]$cfg.dataDiskBitLocker) { $bitLockerPassword = BitLockerPassword }
+Log "Preparing SSH key and credentials"
 $sshKey = EnsureSshKey $cfg $baseDir
 
 $credentialText = @("User: $($cfg.user)", "Password: $($cfg.password)")
@@ -487,9 +584,12 @@ if ([bool]$streaming.enabled -and [bool]$streaming.installSunshine) {
 }
 Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value $credentialText
 
+Log "Resolving Windows ISO"
 $windowsIso = WindowsIso $cfg $cacheDir
+Log "Building unattended install media"
 $media = InstallMedia $cfg $baseDir $windowsIso $sshKey $streaming
 
+Log "Creating Hyper-V disks and VM"
 New-VHD -Path $vhd -SizeBytes ([int64]$cfg.diskGB * 1GB) -Dynamic | Out-Null
 New-VM -Name $cfg.vmName -Generation 2 -MemoryStartupBytes ([int64]$cfg.memoryGB * 1GB) -VHDPath $vhd -SwitchName $cfg.switchName | Out-Null
 Set-VMProcessor -VMName $cfg.vmName -Count ([int]$cfg.cpuCount)
@@ -506,13 +606,19 @@ if (($displayWidth -gt 0) -and ($displayHeight -gt 0)) {
 
 $bootDvd = Add-VMDvdDrive -VMName $cfg.vmName -Path $media.InstallIso -Passthru
 Set-VMFirmware -VMName $cfg.vmName -FirstBootDevice $bootDvd
+Log "Starting VM. Windows setup and first-login bootstrap can take a while"
 Start-VM -Name $cfg.vmName
 
 $ready = WaitForReady $cfg
+Log "Initializing data disk"
 InitializeDataDisk $cfg $dataVhd $bitLockerPassword
+Log "Configuring Moonlight streaming stack"
 RunRemoteStreamingSetup $cfg $streaming
+Log "Applying GPU-PV settings"
 $ready = ApplyGpuPv $cfg $gpu $baseDir
 if (-not $ready) { $ready = WaitForReady $cfg }
+Log "Writing connection files"
 WriteConnectionInfo $cfg $streaming $baseDir
+WriteRdpFile $configPath
 Get-VM -Name $cfg.vmName | Select-Object Name, State, ProcessorCount, MemoryAssigned
 Write-Host "Guest ready: $($ready.ComputerName)"

@@ -199,6 +199,9 @@ $sessionState = Invoke-Command -VMName $cfg.vmName -Credential $credential -Argu
         TerminalServicesMaxIdleTime = [int](RegistryValue $terminalPolicy MaxIdleTime)
         TerminalServicesPromptForPasswordPolicy = [int](RegistryValue $terminalPolicy fPromptForPassword)
         RdpPromptForPassword = [int](RegistryValue $rdpTcp fPromptForPassword)
+        RdpPortNumber = [int](RegistryValue $rdpTcp PortNumber)
+        RdpListenerEnabled = [int](RegistryValue $rdpTcp fEnableWinStation)
+        RdpPortListening = [bool](Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue)
         VideoIdle = PowerValues SUB_VIDEO VIDEOIDLE
         StandbyIdle = PowerValues SUB_SLEEP STANDBYIDLE
         HibernateIdle = PowerValues SUB_SLEEP HIBERNATEIDLE
@@ -226,6 +229,9 @@ if ($sessionState.TerminalServicesMaxConnectionTime -ne 0 -or $sessionState.Term
 if ($sessionState.TerminalServicesPromptForPasswordPolicy -ne 0 -or $sessionState.RdpPromptForPassword -ne 0) {
     throw "Remote Desktop password prompt on reconnect is not disabled."
 }
+if ($sessionState.RdpPortNumber -ne 3389 -or $sessionState.RdpListenerEnabled -ne 1 -or -not $sessionState.RdpPortListening) {
+    throw "Remote Desktop listener is not ready. Port=$($sessionState.RdpPortNumber) Enabled=$($sessionState.RdpListenerEnabled) Listening=$($sessionState.RdpPortListening)"
+}
 
 foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "DiskIdle", "RequirePasswordOnWake")) {
     $values = $sessionState.$setting
@@ -235,6 +241,18 @@ foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "DiskIdle", 
 }
 
 Write-Host "Interactive session policy ready: autologon=on auto-lock=off power-timeouts=never"
+
+$rdpIps = @(VmIPv4Addresses $cfg.vmName)
+if (-not $rdpIps) { throw "No usable VM IPv4 address found for RDP." }
+$rdpOk = $false
+foreach ($ip in $rdpIps) {
+    if (TestTcpPort $ip 3389) {
+        Write-Host "RDP ready: $ip`:3389"
+        $rdpOk = $true
+        break
+    }
+}
+if (-not $rdpOk) { throw "RDP port 3389 is not reachable from the host." }
 
 if ([int]$cfg.dataDiskGB -gt 0) {
     $credentials = Credentials $cfg

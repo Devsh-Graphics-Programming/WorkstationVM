@@ -45,6 +45,28 @@
     "Microsoft.VisualStudioCode",
     "Git.Git",
     "WireGuard.WireGuard",
-    "TorProject.TorBrowser"
+    "TorProject.TorBrowser",
+    "Google.Chrome",
+    {
+      "id": "9NRX63209R7B",
+      "source": "msstore",
+      "name": "Outlook for Windows"
+    },
+    {
+      "id": "Microsoft.VisualStudio.Community",
+      "name": "Visual Studio Community 2026",
+      "override": "--wait --quiet --norestart --add Microsoft.VisualStudio.Workload.NativeDesktop"
+    },
+    "Kitware.CMake",
+    "Python.Python.3.14",
+    "TortoiseGit.TortoiseGit",
+    {
+      "id": "Cendio.ThinLincClient",
+      "source": "direct",
+      "name": "ThinLinc Client",
+      "url": "https://www.cendio.com/downloads/clients/tl-4.20.0-client-windows.exe",
+      "silentArgs": "/S",
+      "checkPath": "C:\\Program Files\\ThinLinc client\\tlclient.exe"
+    }
   ]
 }
