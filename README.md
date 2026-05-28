@@ -256,6 +256,8 @@ This setup does not automate Windows activation. Activate the VM after installat
 
 Unofficial activation tools are outside the scope of this setup. They bypass official licensing and can create audit or compliance risk for business use.
 
+**Win 11 PRO VM inside a Win 11 PRO Host does indeed need 2 separate windows licenses as per the EULA!**
+
 ## VPN
 
 If a customer provides a VPN profile or config, import and enable it inside this VM only. Do not enable customer VPN profiles on the host.
