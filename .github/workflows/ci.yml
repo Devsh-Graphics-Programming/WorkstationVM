@@ -16,16 +16,17 @@ jobs:
       - name: Parse scripts and config
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "lib/iso-writer.ps1", "vendor/Fido.ps1")) {
+          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "enable-gpu-pv.ps1", "pair-moonlight.ps1", "lib/iso-writer.ps1", "vendor/Fido.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count) { throw "PowerShell parse failed: $file" }
           }
-          Get-ChildItem config -Filter *.json | ForEach-Object {
+          $configs = @(Get-ChildItem config -Filter *.json)
+          if ($configs.Count -eq 0) { throw "Expected at least one config file." }
+          $configs | ForEach-Object {
             Get-Content -Raw $_.FullName | ConvertFrom-Json | Out-Null
           }
-          if ((Get-ChildItem config -Filter *.json).Count -ne 1) { throw "Expected one config file." }
 
   smoke:
     needs: static
@@ -74,6 +75,12 @@ jobs:
           $cfg.cpuCount = 2
           $cfg.dataDiskGB = 1
           $cfg.sshEnabled = $false
+          if ($cfg.PSObject.Properties.Name -contains "gpuPv") {
+            $cfg.gpuPv.enabled = $false
+          }
+          if ($cfg.PSObject.Properties.Name -contains "gpu") {
+            $cfg.gpu.enabled = $false
+          }
           $cfg | Add-Member -Force NoteProperty guestIpAddress "192.168.240.2"
           $cfg | Add-Member -Force NoteProperty guestPrefixLength 24
           $cfg | Add-Member -Force NoteProperty guestGateway "192.168.240.1"
