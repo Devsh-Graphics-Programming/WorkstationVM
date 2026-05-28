@@ -58,7 +58,11 @@ This validates BIOS/UEFI virtualization setup, enables Hyper-V, installs the Win
 
 If virtualization is disabled in BIOS/UEFI, the script stops before changing the VM setup. Enable Intel VT-x, Intel Virtualization Technology, AMD-V or SVM in BIOS/UEFI, restart Windows, then run the prepare step again.
 
-After it finishes, close the Administrator PowerShell window. Open a new PowerShell session **without Administrator privileges**.
+**IMPORTANT: SIGN OUT OF WINDOWS AND SIGN BACK IN AFTER RUNNING `prepare-host.ps1` AS ADMINISTRATOR.**
+
+Closing the Administrator PowerShell window is not enough. Windows only refreshes the current user's `Hyper-V Administrators` group membership on a new login session. If you skip the sign-out/sign-in step, the create script can fail later at `New-VHD` with a missing privileges error.
+
+After signing back in, open a new PowerShell session **without Administrator privileges**.
 
 ## Run
 
