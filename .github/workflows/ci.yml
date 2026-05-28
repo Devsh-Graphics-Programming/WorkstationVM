@@ -81,6 +81,11 @@ jobs:
           if ($cfg.PSObject.Properties.Name -contains "gpu") {
             $cfg.gpu.enabled = $false
           }
+          if ($cfg.PSObject.Properties.Name -contains "remoteStreaming") {
+            $cfg.remoteStreaming.enabled = $true
+            $cfg.remoteStreaming.installSunshine = $false
+            $cfg.remoteStreaming.installVirtualDisplayDriver = $true
+          }
           $cfg | Add-Member -Force NoteProperty guestIpAddress "192.168.240.2"
           $cfg | Add-Member -Force NoteProperty guestPrefixLength 24
           $cfg | Add-Member -Force NoteProperty guestGateway "192.168.240.1"
@@ -103,7 +108,13 @@ jobs:
           if ($ips -notcontains "192.168.240.2") { throw "CI VM IP address was not reported by Hyper-V." }
 
       - name: Check VM
-        run: .\check-workstation-vm.ps1 --config config/windows.json
+        run: |
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          if ($cfg.PSObject.Properties.Name -contains "remoteStreaming") {
+            $cfg.remoteStreaming.enabled = $false
+            $cfg | ConvertTo-Json -Depth 5 | Set-Content config/windows.json
+          }
+          .\check-workstation-vm.ps1 --config config/windows.json
 
       - name: Enable CI SSH
         run: |
