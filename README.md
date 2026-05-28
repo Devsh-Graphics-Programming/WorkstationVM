@@ -42,7 +42,7 @@ The script can download the Windows ISO automatically. You can also download the
 - A separate BitLocker-protected data disk is created for confidential files.
 - Dynamic memory and automatic checkpoints are disabled.
 - No checkpoints are created by default.
-- GPU-PV is controlled by `gpuPv.enabled` in `config\windows.json`.
+- GPU-PV is controlled by `gpu.enabled` in `config\windows.json`.
 - Moonlight streaming is controlled by `remoteStreaming.enabled` in `config\windows.json` and exposes Sunshine only on the VM network.
 
 ## Prepare Host
@@ -73,7 +73,7 @@ By default, an existing VM or disk is not deleted. Set `recreate` to `true` only
 The default config enables GPU-PV and Moonlight streaming. If you do not want the VM to receive a host GPU partition, set this before running the create script:
 
 ```json
-"gpuPv": {
+"gpu": {
   "enabled": false
 }
 ```
@@ -86,7 +86,7 @@ If you also do not want Sunshine and Virtual Display Driver installed for Moonli
 }
 ```
 
-Disabling only `gpuPv.enabled` skips the Hyper-V GPU partition and guest GPU driver copy. Disabling `remoteStreaming.enabled` skips Sunshine, Virtual Display Driver and the Moonlight firewall rules.
+Disabling only `gpu.enabled` skips the Hyper-V GPU partition and guest GPU driver copy. Disabling `remoteStreaming.enabled` skips Sunshine, Virtual Display Driver and the Moonlight firewall rules.
 
 The generated login is written to:
 
@@ -124,13 +124,29 @@ The default `config\windows.json` enables a local Sunshine endpoint for Moonligh
 - Virtual Display Driver is installed inside the VM and configured with one virtual display.
 - Sunshine firewall rules are opened for the VM network.
 - Sunshine credentials and the current VM IP are written to `credentials.txt`.
-- GPU-PV is applied after Windows bootstrap when `gpuPv.enabled` is `true`.
+- GPU-PV is applied after Windows bootstrap when `gpu.enabled` is `true`.
+- Empty `remoteStreaming.displayWidth` and `remoteStreaming.displayHeight` use the same detected host display size as VMConnect.
 
-Install Moonlight on the client machine, add the VM IP from `MoonlightHost`, then pair it. When Moonlight shows a PIN, submit it from the host:
+The setup installs the Sunshine server inside the VM. To use Moonlight from the Hyper-V host:
+
+1. Download and install the Moonlight Windows installer on the host from https://github.com/moonlight-stream/moonlight-qt/releases.
+2. Open Moonlight settings before starting the stream and use desktop-quality settings:
+   - Resolution: `Native`, or the same resolution as the VM virtual display.
+   - FPS: `120 FPS`.
+   - Video bitrate: at least `100 Mbps` for host-to-VM streaming on the same PC.
+   - Display mode: `Fullscreen`.
+   - Frame pacing: enabled.
+   - Optimize mouse for remote desktop instead of games: enabled.
+   - Video decoder and video codec: `Automatic`.
+3. Do not leave Moonlight at its default `720p` and low bitrate settings. That makes the VM look blurry because Moonlight upscales a low-resolution stream.
+4. Add the VM IP from `MoonlightHost` in Moonlight.
+5. Click the locked VM tile. When Moonlight shows a PIN, submit it from the host:
 
 ```powershell
 .\pair-moonlight.ps1 --config config\windows.json --pin <moonlight-pin> --name <client-name>
 ```
+
+After pairing, click the VM tile again and start `Desktop`. If the image is blurry, stop the stream, re-check Moonlight's resolution and bitrate settings, then start `Desktop` again. Enable Moonlight's performance stats when troubleshooting and confirm that the stream is negotiated at the expected resolution and FPS.
 
 Open the Sunshine web UI if you want to inspect or tune it:
 
@@ -151,7 +167,7 @@ Use Hyper-V Manager for changes like CPU count, memory, display size or disk exp
 The setup creates a second dynamic data disk by default:
 
 - Drive letter: `W:`
-- Initial maximum size: 24 GB
+- Initial maximum size: 64 GB
 - File system label: `WorkData`
 - BitLocker: enabled with used-space-only encryption
 
@@ -225,20 +241,15 @@ Higher refresh rates are not expected through the standard Hyper-V VMConnect or 
 
 ## GPU-PV
 
-GPU-PV can share part of a compatible host GPU with the VM. `create-workstation-vm.ps1` applies it when `gpuPv.enabled` is `true` in `config\windows.json`. You can also run the helper manually against an existing VM.
+GPU-PV can share part of a compatible host GPU with the VM. `create-workstation-vm.ps1` applies it when `gpu.enabled` is `true` in `config\windows.json`. You can also run the helper manually against an existing VM.
 
-Edit:
-
-```text
-config\gpu.json
-```
+Edit `config\windows.json`:
 
 The default allocation is conservative:
 
 ```json
-{
-  "vmName": "WorkstationW11",
-  "credentialsPath": "~/VMs/WorkstationWindows11/credentials.txt",
+"gpu": {
+  "enabled": true,
   "gpuName": "AUTO",
   "allocationPercent": 25
 }
@@ -247,13 +258,13 @@ The default allocation is conservative:
 Check compatibility without changing the VM:
 
 ```powershell
-.\enable-gpu-pv.ps1 --config config\gpu.json --check
+.\enable-gpu-pv.ps1 --config config\windows.json --check
 ```
 
 Apply or update GPU-PV:
 
 ```powershell
-.\enable-gpu-pv.ps1 --config config\gpu.json
+.\enable-gpu-pv.ps1 --config config\windows.json
 ```
 
 Running the script again updates the existing GPU-PV adapter allocation. For example, changing `allocationPercent` from `25` to `30` and running the script again updates the adapter instead of adding another one. Existing driver files are not refreshed while GPU-PV is active because the guest may have them loaded.
@@ -261,7 +272,7 @@ Running the script again updates the existing GPU-PV adapter allocation. For exa
 Disable GPU-PV:
 
 ```powershell
-.\enable-gpu-pv.ps1 --config config\gpu.json --disable
+.\enable-gpu-pv.ps1 --config config\windows.json --disable
 ```
 
 The helper asks the guest to shut down cleanly through PowerShell Direct, copies the current host GPU driver files into the guest system disk, configures the Hyper-V GPU partition adapter, then restarts the VM if it was running before. It does not force power off, delete or recreate the VM.

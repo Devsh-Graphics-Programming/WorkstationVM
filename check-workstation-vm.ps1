@@ -119,9 +119,12 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     sshEnabled = $true
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
 
-$gpuPv = ChildConfig $cfg "gpuPv"
-Default $gpuPv "enabled" $false
-Default $gpuPv "allocationPercent" 25
+if ($null -eq $cfg.gpu -and $null -ne $cfg.gpuPv) {
+    $cfg | Add-Member -Force NoteProperty "gpu" $cfg.gpuPv
+}
+$gpu = ChildConfig $cfg "gpu"
+Default $gpu "enabled" $false
+Default $gpu "allocationPercent" 25
 
 $streaming = ChildConfig $cfg "remoteStreaming"
 Default $streaming "enabled" $false
@@ -336,7 +339,7 @@ if ([bool]$cfg.sshEnabled) {
     if (-not $ok) { throw "SSH key login failed." }
 }
 
-if ([bool]$gpuPv.enabled) {
+if ([bool]$gpu.enabled) {
     $adapter = @(Get-VMGpuPartitionAdapter -VMName $cfg.vmName)
     if ($adapter.Count -ne 1) { throw "Expected one GPU-PV adapter, found $($adapter.Count)." }
 

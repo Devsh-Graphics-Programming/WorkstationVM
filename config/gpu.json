@@ -1,6 +1,0 @@
-{
-  "vmName": "WorkstationW11",
-  "credentialsPath": "~/VMs/WorkstationWindows11/credentials.txt",
-  "gpuName": "AUTO",
-  "allocationPercent": 25
-}

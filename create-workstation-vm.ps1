@@ -30,8 +30,11 @@ function Password {
     -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
 }
 
-function GpuPvConfig($cfg) {
-    $gpu = ChildConfig $cfg "gpuPv"
+function GpuConfig($cfg) {
+    if ($null -eq $cfg.gpu -and $null -ne $cfg.gpuPv) {
+        $cfg | Add-Member -Force NoteProperty "gpu" $cfg.gpuPv
+    }
+    $gpu = ChildConfig $cfg "gpu"
     Default $gpu "enabled" $false
     Default $gpu "gpuName" "AUTO"
     Default $gpu "allocationPercent" 25
@@ -47,8 +50,8 @@ function RemoteStreamingConfig($cfg) {
     Default $streaming "sunshinePassword" ""
     Default $streaming "sunshineName" ""
     Default $streaming "port" 47989
-    Default $streaming "displayWidth" 1920
-    Default $streaming "displayHeight" 1080
+    Default $streaming "displayWidth" ""
+    Default $streaming "displayHeight" ""
     Default $streaming "refreshRate" 120
     Default $streaming "virtualDisplayCount" 1
     Default $streaming "openFirewall" $true
@@ -60,6 +63,13 @@ function RemoteStreamingConfig($cfg) {
     }
 
     return $streaming
+}
+
+function ResolveStreamingDisplay($streaming, $displayWidth, $displayHeight) {
+    if (-not [bool]$streaming.enabled -or -not [bool]$streaming.installVirtualDisplayDriver) { return }
+
+    if ((Number $streaming.displayWidth) -le 0) { $streaming.displayWidth = [int]$displayWidth }
+    if ((Number $streaming.displayHeight) -le 0) { $streaming.displayHeight = [int]$displayHeight }
 }
 
 function WingetPackages($cfg, $streaming) {
@@ -333,13 +343,13 @@ function WriteConnectionInfo($cfg, $streaming, $baseDir) {
     )
 }
 
-function WriteGpuPvConfig($cfg, $gpuPv, $baseDir) {
+function WriteGpuPvConfig($cfg, $gpu, $baseDir) {
     $path = Join-Path $baseDir "gpu-pv.json"
     [ordered]@{
         vmName = [string]$cfg.vmName
         credentialsPath = (Join-Path $baseDir "credentials.txt")
-        gpuName = [string]$gpuPv.gpuName
-        allocationPercent = [int]$gpuPv.allocationPercent
+        gpuName = [string]$gpu.gpuName
+        allocationPercent = [int]$gpu.allocationPercent
     } | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
     return $path
 }
@@ -369,13 +379,13 @@ function RunRemoteStreamingSetup($cfg, $streaming) {
     } | Out-Host
 }
 
-function ApplyGpuPv($cfg, $gpuPv, $baseDir) {
-    if (-not [bool]$gpuPv.enabled) { return $null }
+function ApplyGpuPv($cfg, $gpu, $baseDir) {
+    if (-not [bool]$gpu.enabled) { return $null }
 
     $script = Join-Path $PSScriptRoot "enable-gpu-pv.ps1"
     if (-not (Test-Path -LiteralPath $script)) { throw "Missing enable-gpu-pv.ps1." }
 
-    $gpuConfig = WriteGpuPvConfig $cfg $gpuPv $baseDir
+    $gpuConfig = WriteGpuPvConfig $cfg $gpu $baseDir
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script --config $gpuConfig
     if ($LASTEXITCODE -ne 0) { throw "GPU-PV setup failed." }
 
@@ -415,8 +425,8 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     imageCacheDir = "~/VMs/_image-cache/windows"
     memoryGB = 8
     cpuCount = 4
-    diskGB = 100
-    dataDiskGB = 24
+    diskGB = 128
+    dataDiskGB = 64
     dataDiskLetter = "W"
     dataDiskLabel = "WorkData"
     dataDiskBitLocker = $true
@@ -429,8 +439,17 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
 
 if ([string]::IsNullOrWhiteSpace($cfg.password)) { $cfg.password = Password }
 
-$gpuPv = GpuPvConfig $cfg
+$gpu = GpuConfig $cfg
 $streaming = RemoteStreamingConfig $cfg
+
+$displayWidth = Number $cfg.displayWidth
+$displayHeight = Number $cfg.displayHeight
+if (($displayWidth -le 0) -or ($displayHeight -le 0)) {
+    $display = HostDisplay
+    if ($displayWidth -le 0) { $displayWidth = $display.Width }
+    if ($displayHeight -le 0) { $displayHeight = $display.Height }
+}
+ResolveStreamingDisplay $streaming $displayWidth $displayHeight
 
 $baseDir = FullPath $cfg.baseDir
 $cacheDir = FullPath $cfg.imageCacheDir
@@ -481,13 +500,6 @@ Set-VM -Name $cfg.vmName -EnhancedSessionTransportType VMBus
 Set-VMKeyProtector -VMName $cfg.vmName -NewLocalKeyProtector
 Enable-VMTPM -VMName $cfg.vmName
 
-$displayWidth = Number $cfg.displayWidth
-$displayHeight = Number $cfg.displayHeight
-if (($displayWidth -le 0) -or ($displayHeight -le 0)) {
-    $display = HostDisplay
-    if ($displayWidth -le 0) { $displayWidth = $display.Width }
-    if ($displayHeight -le 0) { $displayHeight = $display.Height }
-}
 if (($displayWidth -gt 0) -and ($displayHeight -gt 0)) {
     Set-VMVideo -VMName $cfg.vmName -ResolutionType Single -HorizontalResolution $displayWidth -VerticalResolution $displayHeight
 }
@@ -499,7 +511,7 @@ Start-VM -Name $cfg.vmName
 $ready = WaitForReady $cfg
 InitializeDataDisk $cfg $dataVhd $bitLockerPassword
 RunRemoteStreamingSetup $cfg $streaming
-$ready = ApplyGpuPv $cfg $gpuPv $baseDir
+$ready = ApplyGpuPv $cfg $gpu $baseDir
 if (-not $ready) { $ready = WaitForReady $cfg }
 WriteConnectionInfo $cfg $streaming $baseDir
 Get-VM -Name $cfg.vmName | Select-Object Name, State, ProcessorCount, MemoryAssigned

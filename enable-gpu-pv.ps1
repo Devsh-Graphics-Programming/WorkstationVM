@@ -25,6 +25,36 @@ function Default($cfg, $name, $value) {
     if ($null -eq $cfg.$name) { $cfg | Add-Member -Force NoteProperty $name $value }
 }
 
+function ConfigValue($cfg, $name, $defaultValue) {
+    if ($null -eq $cfg -or $null -eq $cfg.$name) { return $defaultValue }
+    return $cfg.$name
+}
+
+function LoadGpuConfig($path) {
+    $raw = Get-Content -Raw (FullPath $path) | ConvertFrom-Json
+
+    if ($null -ne $raw.gpu -or $null -ne $raw.gpuPv) {
+        $gpu = if ($null -ne $raw.gpu) { $raw.gpu } else { $raw.gpuPv }
+        $baseDir = FullPath (ConfigValue $raw "baseDir" "~/VMs/WorkstationWindows11")
+        $cfg = [pscustomobject]@{
+            enabled = ConfigValue $gpu "enabled" $true
+            vmName = ConfigValue $raw "vmName" "WorkstationW11"
+            credentialsPath = Join-Path $baseDir "credentials.txt"
+            gpuName = ConfigValue $gpu "gpuName" "AUTO"
+            allocationPercent = ConfigValue $gpu "allocationPercent" 25
+        }
+        return $cfg
+    }
+
+    Default $raw "enabled" $true
+    Default $raw "vmName" "WorkstationW11"
+    Default $raw "baseDir" "~/VMs/WorkstationWindows11"
+    Default $raw "credentialsPath" (Join-Path (FullPath $raw.baseDir) "credentials.txt")
+    Default $raw "gpuName" "AUTO"
+    Default $raw "allocationPercent" 25
+    return $raw
+}
+
 function PciIdFromPartitionableGpu($name) {
     if ([string]$name -match 'PCI#(.+?)#\{') { return "PCI\" + $Matches[1].Replace("#", "\") }
     return ""
@@ -331,16 +361,10 @@ function DisableGpuPv($cfg) {
 
 $configPath = ArgValue "config"
 if ([string]::IsNullOrWhiteSpace($configPath)) {
-    throw "Usage: .\enable-gpu-pv.ps1 --config config\gpu.json [--check] [--disable]"
+    throw "Usage: .\enable-gpu-pv.ps1 --config config\windows.json [--check] [--disable]"
 }
 
-$cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
-@{
-    vmName = "WorkstationW11"
-    credentialsPath = "~/VMs/WorkstationWindows11/credentials.txt"
-    gpuName = "AUTO"
-    allocationPercent = 25
-}.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
+$cfg = LoadGpuConfig $configPath
 
 $cfg.gpuName = ([string]$cfg.gpuName).Trim()
 if ([string]::IsNullOrWhiteSpace($cfg.gpuName)) { $cfg.gpuName = "AUTO" }
@@ -359,6 +383,7 @@ if (ArgSwitch "check") {
         VMState = $vm.State
         GPUName = $gpu.Controller.Name
         GPUPciId = $gpu.PciId
+        Enabled = [bool]$cfg.enabled
         AllocationPercent = $cfg.allocationPercent
         ExistingGpuPartitionAdapters = $adapter.Count
     } | Format-List
@@ -369,6 +394,10 @@ if (ArgSwitch "disable") {
     DisableGpuPv $cfg
     Write-Host "GPU-PV disabled for VM '$($cfg.vmName)'."
     return
+}
+
+if (-not [bool]$cfg.enabled) {
+    throw "GPU-PV is disabled in the config. Set gpu.enabled to true before applying it."
 }
 
 EnableGpuPv $cfg $gpu

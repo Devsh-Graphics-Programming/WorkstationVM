@@ -7,15 +7,15 @@
   "imageCacheDir": "~/VMs/_image-cache/windows",
   "memoryGB": 8,
   "cpuCount": 4,
-  "diskGB": 64,
-  "dataDiskGB": 24,
+  "diskGB": 128,
+  "dataDiskGB": 64,
   "dataDiskLetter": "W",
   "dataDiskLabel": "WorkData",
   "dataDiskBitLocker": true,
   "sshEnabled": true,
   "displayWidth": "",
   "displayHeight": "",
-  "gpuPv": {
+  "gpu": {
     "enabled": true,
     "gpuName": "AUTO",
     "allocationPercent": 25
@@ -28,8 +28,8 @@
     "sunshinePassword": "",
     "sunshineName": "WorkstationW11",
     "port": 47989,
-    "displayWidth": 1920,
-    "displayHeight": 1080,
+    "displayWidth": "",
+    "displayHeight": "",
     "refreshRate": 120,
     "virtualDisplayCount": 1,
     "openFirewall": true
