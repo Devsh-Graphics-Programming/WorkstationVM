@@ -116,46 +116,6 @@ Check the VM:
 .\check-workstation-vm.ps1 --config config\windows.json
 ```
 
-## Moonlight Streaming
-
-The default `config\windows.json` enables a local Sunshine endpoint for Moonlight:
-
-- Sunshine is installed as a Windows service inside the VM.
-- Virtual Display Driver is installed inside the VM and configured with one virtual display.
-- Sunshine firewall rules are opened for the VM network.
-- Sunshine credentials and the current VM IP are written to `credentials.txt`.
-- GPU-PV is applied after Windows bootstrap when `gpu.enabled` is `true`.
-- Empty `remoteStreaming.displayWidth` and `remoteStreaming.displayHeight` use the same detected host display size as VMConnect.
-
-The setup installs the Sunshine server inside the VM. To use Moonlight from the Hyper-V host:
-
-1. Download and install the Moonlight Windows installer on the host from https://github.com/moonlight-stream/moonlight-qt/releases.
-2. Open Moonlight settings before starting the stream and use desktop-quality settings:
-   - Resolution: `Native`, or the same resolution as the VM virtual display.
-   - FPS: `120 FPS`.
-   - Video bitrate: at least `100 Mbps` for host-to-VM streaming on the same PC.
-   - Display mode: `Fullscreen`.
-   - Frame pacing: enabled.
-   - Optimize mouse for remote desktop instead of games: enabled.
-   - Video decoder and video codec: `Automatic`.
-3. Do not leave Moonlight at its default `720p` and low bitrate settings. That makes the VM look blurry because Moonlight upscales a low-resolution stream.
-4. Add the VM IP from `MoonlightHost` in Moonlight.
-5. Click the locked VM tile. When Moonlight shows a PIN, submit it from the host:
-
-```powershell
-.\pair-moonlight.ps1 --config config\windows.json --pin <moonlight-pin> --name <client-name>
-```
-
-After pairing, click the VM tile again and start `Desktop`. If the image is blurry, stop the stream, re-check Moonlight's resolution and bitrate settings, then start `Desktop` again. Enable Moonlight's performance stats when troubleshooting and confirm that the stream is negotiated at the expected resolution and FPS.
-
-Open the Sunshine web UI if you want to inspect or tune it:
-
-```text
-https://<vm-ip>:47990
-```
-
-The Sunshine username and password are in `credentials.txt`. Keep them private. Use Moonlight's client settings to request 120 FPS or another refresh rate.
-
 ## Changing VM Settings
 
 `config\windows.json` is used when the VM is created. After the VM exists, you can change normal Hyper-V settings without recreating it.
@@ -302,3 +262,43 @@ The default Hyper-V network uses NAT, so host traffic and VM traffic stay on sep
 The VM enables the RDP server, Remote Desktop firewall rules and RDP access for the workstation user during first login.
 
 If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](https://github.com/Upinel/BetterRDP) and applying its `.reg` file **on the host, not inside the VM**. It tunes the RDP experience by enabling GPU/RemoteFX policies, 60 FPS capture/DWM settings, AVC444/hardware encode preference, image quality, latency and bandwidth-related registry settings. This is optional and is not vendored here.
+
+## Moonlight Streaming (Optional If You Want More Than 60 FPS)
+
+The default `config\windows.json` enables a local Sunshine endpoint for Moonlight:
+
+- Sunshine is installed as a Windows service inside the VM.
+- Virtual Display Driver is installed inside the VM and configured with one virtual display.
+- Sunshine firewall rules are opened for the VM network.
+- Sunshine credentials and the current VM IP are written to `credentials.txt`.
+- GPU-PV is applied after Windows bootstrap when `gpu.enabled` is `true`.
+- Empty `remoteStreaming.displayWidth` and `remoteStreaming.displayHeight` use the same detected host display size as VMConnect.
+
+The setup installs the Sunshine server inside the VM. To use Moonlight from the Hyper-V host:
+
+1. Download and install the Moonlight Windows installer on the host from https://github.com/moonlight-stream/moonlight-qt/releases.
+2. Open Moonlight settings before starting the stream and use desktop-quality settings:
+   - Resolution: `Native`, or the same resolution as the VM virtual display.
+   - FPS: `120 FPS`.
+   - Video bitrate: at least `100 Mbps` for host-to-VM streaming on the same PC.
+   - Display mode: `Fullscreen`.
+   - Frame pacing: enabled.
+   - Optimize mouse for remote desktop instead of games: enabled.
+   - Video decoder and video codec: `Automatic`.
+3. Do not leave Moonlight at its default `720p` and low bitrate settings. That makes the VM look blurry because Moonlight upscales a low-resolution stream.
+4. If Moonlight auto-discovers the VM, click the locked VM tile. If it does not show up automatically, add the VM IP from `MoonlightHost` manually.
+5. When Moonlight shows a PIN, submit it from the host:
+
+```powershell
+.\pair-moonlight.ps1 --config config\windows.json --pin <moonlight-pin> --name <client-name>
+```
+
+After pairing, click the VM tile again and start `Desktop`. If the image is blurry, stop the stream, re-check Moonlight's resolution and bitrate settings, then start `Desktop` again. Enable Moonlight's performance stats when troubleshooting and confirm that the stream is negotiated at the expected resolution and FPS.
+
+Open the Sunshine web UI if you want to inspect or tune it:
+
+```text
+https://<vm-ip>:47990
+```
+
+The Sunshine username and password are in `credentials.txt`. Keep them private. Use Moonlight's client settings to request 120 FPS or another refresh rate.
