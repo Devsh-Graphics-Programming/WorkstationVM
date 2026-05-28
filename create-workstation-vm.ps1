@@ -19,8 +19,63 @@ function Default($cfg, $name, $value) {
     if ($null -eq $cfg.$name) { $cfg | Add-Member -Force NoteProperty $name $value }
 }
 
+function ChildConfig($cfg, $name) {
+    if ($null -eq $cfg.$name) {
+        $cfg | Add-Member -Force NoteProperty $name ([pscustomobject]@{})
+    }
+    return $cfg.$name
+}
+
 function Password {
     -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+}
+
+function GpuPvConfig($cfg) {
+    $gpu = ChildConfig $cfg "gpuPv"
+    Default $gpu "enabled" $false
+    Default $gpu "gpuName" "AUTO"
+    Default $gpu "allocationPercent" 25
+    return $gpu
+}
+
+function RemoteStreamingConfig($cfg) {
+    $streaming = ChildConfig $cfg "remoteStreaming"
+    Default $streaming "enabled" $false
+    Default $streaming "installSunshine" $true
+    Default $streaming "installVirtualDisplayDriver" $true
+    Default $streaming "sunshineUser" ""
+    Default $streaming "sunshinePassword" ""
+    Default $streaming "sunshineName" ""
+    Default $streaming "port" 47989
+    Default $streaming "displayWidth" 1920
+    Default $streaming "displayHeight" 1080
+    Default $streaming "refreshRate" 120
+    Default $streaming "virtualDisplayCount" 1
+    Default $streaming "openFirewall" $true
+
+    if ([string]::IsNullOrWhiteSpace([string]$streaming.sunshineUser)) { $streaming.sunshineUser = $cfg.user }
+    if ([string]::IsNullOrWhiteSpace([string]$streaming.sunshineName)) { $streaming.sunshineName = $cfg.vmName }
+    if ([bool]$streaming.enabled -and [bool]$streaming.installSunshine -and [string]::IsNullOrWhiteSpace([string]$streaming.sunshinePassword)) {
+        $streaming.sunshinePassword = Password
+    }
+
+    return $streaming
+}
+
+function WingetPackages($cfg, $streaming) {
+    $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    if ([bool]$streaming.enabled) {
+        if ([bool]$streaming.installVirtualDisplayDriver) { $packages += "Microsoft.VCRedist.2015+.x64" }
+        if ([bool]$streaming.installSunshine) { $packages += "LizardByte.Sunshine" }
+    }
+
+    $seen = @{}
+    foreach ($package in $packages) {
+        $key = ([string]$package).ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $package
+    }
 }
 
 function BitLockerPassword {
@@ -118,17 +173,33 @@ function WindowsIso($cfg, $cacheDir) {
     return $iso
 }
 
-function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey) {
+function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey, $streaming) {
     $dir = Join-Path $baseDir "answer"
     $installIso = Join-Path $baseDir "$($cfg.vmName)-install.iso"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-    $packages = @($cfg.wingetPackages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $packages = @(WingetPackages $cfg $streaming)
     Set-Content -LiteralPath (Join-Path $dir "packages.txt") -Value $packages -Encoding UTF8
     [ordered]@{
         autoLogonUser = $cfg.user
         autoLogonPassword = $cfg.password
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir "bootstrap-config.json") -Encoding UTF8
+    if ([bool]$streaming.enabled) {
+        [ordered]@{
+            enabled = [bool]$streaming.enabled
+            installSunshine = [bool]$streaming.installSunshine
+            installVirtualDisplayDriver = [bool]$streaming.installVirtualDisplayDriver
+            sunshineUser = [string]$streaming.sunshineUser
+            sunshinePassword = [string]$streaming.sunshinePassword
+            sunshineName = [string]$streaming.sunshineName
+            port = [int]$streaming.port
+            displayWidth = [int]$streaming.displayWidth
+            displayHeight = [int]$streaming.displayHeight
+            refreshRate = [int]$streaming.refreshRate
+            virtualDisplayCount = [int]$streaming.virtualDisplayCount
+            openFirewall = [bool]$streaming.openFirewall
+        } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $dir "streaming.json") -Encoding UTF8
+    }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "bootstrap-windows.ps1") -Destination $dir -Force
     if ($sshKey) {
         Copy-Item -LiteralPath $sshKey.Public -Destination (Join-Path $dir "ssh_authorized_key.pub") -Force
@@ -243,6 +314,74 @@ function InitializeDataDisk($cfg, $dataVhd, $bitLockerPassword) {
     } | Out-Host
 }
 
+function VmIPv4Addresses($vmName) {
+    @(Get-VMNetworkAdapter -VMName $vmName |
+        Select-Object -ExpandProperty IPAddresses |
+        Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notlike '169.254.*' -and $_ -ne '0.0.0.0' })
+}
+
+function WriteConnectionInfo($cfg, $streaming, $baseDir) {
+    if (-not [bool]$streaming.enabled) { return }
+
+    $ip = VmIPv4Addresses $cfg.vmName | Select-Object -First 1
+    if (-not $ip) { return }
+
+    $webPort = [int]$streaming.port + 1
+    Add-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value @(
+        "MoonlightHost: $ip",
+        "SunshineWebUi: https://${ip}:$webPort"
+    )
+}
+
+function WriteGpuPvConfig($cfg, $gpuPv, $baseDir) {
+    $path = Join-Path $baseDir "gpu-pv.json"
+    [ordered]@{
+        vmName = [string]$cfg.vmName
+        credentialsPath = (Join-Path $baseDir "credentials.txt")
+        gpuName = [string]$gpuPv.gpuName
+        allocationPercent = [int]$gpuPv.allocationPercent
+    } | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
+    return $path
+}
+
+function RunRemoteStreamingSetup($cfg, $streaming) {
+    if (-not [bool]$streaming.enabled) { return }
+
+    Invoke-Command -VMName $cfg.vmName -Credential (GuestCredential $cfg) -ScriptBlock {
+        $root = "C:\WorkstationVM"
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+        $media = Get-PSDrive -PSProvider FileSystem |
+            Where-Object {
+                (Test-Path (Join-Path $_.Root "bootstrap-windows.ps1")) -and
+                (Test-Path (Join-Path $_.Root "streaming.json"))
+            } |
+            Select-Object -First 1
+        if (-not $media) { throw "Install media with streaming setup files was not found." }
+
+        $bootstrap = Join-Path $root "bootstrap-windows.ps1"
+        $streamingConfig = Join-Path $root "streaming.json"
+        Copy-Item -LiteralPath (Join-Path $media.Root "bootstrap-windows.ps1") -Destination $bootstrap -Force
+        Copy-Item -LiteralPath (Join-Path $media.Root "streaming.json") -Destination $streamingConfig -Force
+
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap --streaming-config $streamingConfig
+        if ($LASTEXITCODE -ne 0) { throw "Remote streaming setup failed with exit code $LASTEXITCODE." }
+    } | Out-Host
+}
+
+function ApplyGpuPv($cfg, $gpuPv, $baseDir) {
+    if (-not [bool]$gpuPv.enabled) { return $null }
+
+    $script = Join-Path $PSScriptRoot "enable-gpu-pv.ps1"
+    if (-not (Test-Path -LiteralPath $script)) { throw "Missing enable-gpu-pv.ps1." }
+
+    $gpuConfig = WriteGpuPvConfig $cfg $gpuPv $baseDir
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script --config $gpuConfig
+    if ($LASTEXITCODE -ne 0) { throw "GPU-PV setup failed." }
+
+    return (WaitForReady $cfg)
+}
+
 function HostDisplay {
     $mode = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
         Where-Object { $_.CurrentHorizontalResolution -and $_.CurrentVerticalResolution } |
@@ -290,11 +429,15 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
 
 if ([string]::IsNullOrWhiteSpace($cfg.password)) { $cfg.password = Password }
 
+$gpuPv = GpuPvConfig $cfg
+$streaming = RemoteStreamingConfig $cfg
+
 $baseDir = FullPath $cfg.baseDir
 $cacheDir = FullPath $cfg.imageCacheDir
 $vmDir = Join-Path $baseDir "vm"
 $vhd = Join-Path $vmDir "$($cfg.vmName).vhdx"
 $dataVhd = Join-Path $vmDir "$($cfg.vmName)-data.vhdx"
+$gpuPvState = Join-Path $vmDir "gpu-pv-state.json"
 
 New-Item -ItemType Directory -Force -Path $baseDir, $cacheDir, $vmDir | Out-Null
 
@@ -305,6 +448,7 @@ if ([bool]$cfg.recreate) {
     RemoveVm $cfg.vmName
     if ($existingDisk) { Remove-Item -LiteralPath $vhd -Force }
     if ($existingDataDisk) { Remove-Item -LiteralPath $dataVhd -Force }
+    if (Test-Path -LiteralPath $gpuPvState) { Remove-Item -LiteralPath $gpuPvState -Force }
 } elseif ($existingVm -or $existingDisk -or $existingDataDisk) {
     throw "VM or disk already exists. Set recreate to true only when you intentionally want to replace it."
 }
@@ -318,10 +462,14 @@ if ($bitLockerPassword) {
     $credentialText += "DataDisk: $($cfg.dataDiskLetter):"
     $credentialText += "DataDiskBitLockerPassword: $bitLockerPassword"
 }
+if ([bool]$streaming.enabled -and [bool]$streaming.installSunshine) {
+    $credentialText += "SunshineUser: $($streaming.sunshineUser)"
+    $credentialText += "SunshinePassword: $($streaming.sunshinePassword)"
+}
 Set-Content -LiteralPath (Join-Path $baseDir "credentials.txt") -Value $credentialText
 
 $windowsIso = WindowsIso $cfg $cacheDir
-$media = InstallMedia $cfg $baseDir $windowsIso $sshKey
+$media = InstallMedia $cfg $baseDir $windowsIso $sshKey $streaming
 
 New-VHD -Path $vhd -SizeBytes ([int64]$cfg.diskGB * 1GB) -Dynamic | Out-Null
 New-VM -Name $cfg.vmName -Generation 2 -MemoryStartupBytes ([int64]$cfg.memoryGB * 1GB) -VHDPath $vhd -SwitchName $cfg.switchName | Out-Null
@@ -350,5 +498,9 @@ Start-VM -Name $cfg.vmName
 
 $ready = WaitForReady $cfg
 InitializeDataDisk $cfg $dataVhd $bitLockerPassword
+RunRemoteStreamingSetup $cfg $streaming
+$ready = ApplyGpuPv $cfg $gpuPv $baseDir
+if (-not $ready) { $ready = WaitForReady $cfg }
+WriteConnectionInfo $cfg $streaming $baseDir
 Get-VM -Name $cfg.vmName | Select-Object Name, State, ProcessorCount, MemoryAssigned
 Write-Host "Guest ready: $($ready.ComputerName)"

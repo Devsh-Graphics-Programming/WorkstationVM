@@ -18,6 +18,13 @@ function Default($cfg, $name, $value) {
     if ($null -eq $cfg.$name) { $cfg | Add-Member -Force NoteProperty $name $value }
 }
 
+function ChildConfig($cfg, $name) {
+    if ($null -eq $cfg.$name) {
+        $cfg | Add-Member -Force NoteProperty $name ([pscustomobject]@{})
+    }
+    return $cfg.$name
+}
+
 function Credentials($cfg) {
     $baseDir = FullPath $cfg.baseDir
     $file = Join-Path $baseDir "credentials.txt"
@@ -33,6 +40,49 @@ function Credentials($cfg) {
         $cfg.password = $values["Password"]
     }
     return $values
+}
+
+function VmIPv4Addresses($vmName) {
+    @(Get-VMNetworkAdapter -VMName $vmName |
+        Select-Object -ExpandProperty IPAddresses |
+        Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notlike '169.254.*' -and $_ -ne '0.0.0.0' })
+}
+
+function TestTcpPort($hostName, $port) {
+    $client = New-Object Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect($hostName, $port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(5000, $false)) { return $false }
+        $client.EndConnect($async)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+function InvokeSunshineApi($hostAddress, $port, $user, $password, $path) {
+    $authText = "${user}:${password}"
+    $headers = @{
+        Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($authText))
+    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
+    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    try {
+        $request = @{
+            Uri = "https://$($hostAddress):$port$path"
+            Method = "Get"
+            Headers = $headers
+        }
+        if ((Get-Command Invoke-RestMethod).Parameters.ContainsKey("SkipCertificateCheck")) {
+            $request.SkipCertificateCheck = $true
+        }
+        Invoke-RestMethod @request
+    } finally {
+        [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback
+    }
 }
 
 function SshKeyPath($cfg) {
@@ -68,6 +118,14 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     dataDiskBitLocker = $true
     sshEnabled = $true
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
+
+$gpuPv = ChildConfig $cfg "gpuPv"
+Default $gpuPv "enabled" $false
+Default $gpuPv "allocationPercent" 25
+
+$streaming = ChildConfig $cfg "remoteStreaming"
+Default $streaming "enabled" $false
+Default $streaming "port" 47989
 
 $vm = Get-VM -Name $cfg.vmName -ErrorAction Stop
 
@@ -276,4 +334,64 @@ if ([bool]$cfg.sshEnabled) {
         }
     }
     if (-not $ok) { throw "SSH key login failed." }
+}
+
+if ([bool]$gpuPv.enabled) {
+    $adapter = @(Get-VMGpuPartitionAdapter -VMName $cfg.vmName)
+    if ($adapter.Count -ne 1) { throw "Expected one GPU-PV adapter, found $($adapter.Count)." }
+
+    $displayDevices = Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
+        @(Get-PnpDevice -PresentOnly -Class Display -ErrorAction SilentlyContinue |
+            Select-Object FriendlyName, Status)
+    }
+    $gpuDevice = $displayDevices |
+        Where-Object { $_.FriendlyName -notmatch "Hyper-V|Virtual Display|MttVDD|IddSampleDriver|IDD" -and $_.Status -eq "OK" } |
+        Select-Object -First 1
+    if (-not $gpuDevice) { throw "No present non-Hyper-V GPU display device is OK inside the guest." }
+    Write-Host "GPU-PV ready: $($gpuDevice.FriendlyName)"
+}
+
+if ([bool]$streaming.enabled) {
+    $credentialValues = Credentials $cfg
+    if (-not $credentialValues.ContainsKey("SunshineUser") -or -not $credentialValues.ContainsKey("SunshinePassword")) {
+        throw "credentials.txt does not contain SunshineUser and SunshinePassword."
+    }
+
+    $streamingState = Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList ([int]$streaming.port) -ScriptBlock {
+        param($port)
+
+        $service = Get-Service -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "Sunshine*" -or $_.DisplayName -like "Sunshine*" } |
+            Select-Object -First 1
+        $vdd = Get-PnpDevice -Class Display -ErrorAction SilentlyContinue |
+            Where-Object { $_.FriendlyName -match "Virtual Display Driver|MttVDD|IddSampleDriver|IDD" } |
+            Select-Object -First 1
+        $conf = Join-Path $env:ProgramFiles "Sunshine\config\sunshine.conf"
+        $webPort = $port + 1
+
+        [pscustomobject]@{
+            SunshineServiceName = if ($service) { $service.Name } else { "" }
+            SunshineServiceStatus = if ($service) { [string]$service.Status } else { "" }
+            SunshineConfigExists = Test-Path -LiteralPath $conf
+            VirtualDisplayName = if ($vdd) { $vdd.FriendlyName } else { "" }
+            VirtualDisplayStatus = if ($vdd) { [string]$vdd.Status } else { "" }
+            WebPortListening = [bool](Get-NetTCPConnection -LocalPort $webPort -State Listen -ErrorAction SilentlyContinue)
+        }
+    }
+
+    if ($streamingState.SunshineServiceStatus -ne "Running") {
+        throw "Sunshine service is not running. Service=$($streamingState.SunshineServiceName) Status=$($streamingState.SunshineServiceStatus)"
+    }
+    if (-not $streamingState.SunshineConfigExists) { throw "Sunshine config file is missing." }
+    if ([string]::IsNullOrWhiteSpace($streamingState.VirtualDisplayName)) { throw "Virtual Display Driver was not detected in the guest." }
+    if ($streamingState.VirtualDisplayStatus -ne "OK") { throw "Virtual Display Driver status is $($streamingState.VirtualDisplayStatus)." }
+    if (-not $streamingState.WebPortListening) { throw "Sunshine Web UI is not listening in the guest." }
+
+    $ip = VmIPv4Addresses $cfg.vmName | Select-Object -First 1
+    if (-not $ip) { throw "No usable VM IPv4 address found for Sunshine." }
+    $webPort = [int]$streaming.port + 1
+    if (-not (TestTcpPort $ip $webPort)) { throw "Sunshine Web UI is not reachable from host at $ip`:$webPort." }
+    InvokeSunshineApi $ip $webPort $credentialValues["SunshineUser"] $credentialValues["SunshinePassword"] "/api/config" | Out-Null
+
+    Write-Host "Moonlight streaming ready: https://${ip}:$webPort"
 }

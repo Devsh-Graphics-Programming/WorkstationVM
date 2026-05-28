@@ -27,6 +27,8 @@ The script can download the Windows ISO automatically. You can also download the
 - Creates a second dynamic data disk, formats it as `W:` and enables BitLocker on it.
 - Generates an SSH key and enables OpenSSH Server inside the VM for the workstation user.
 - Waits until the guest finishes bootstrap and is ready to use.
+- Can enable GPU-PV during creation so the VM receives a partition of a compatible host GPU.
+- Can install Sunshine and Virtual Display Driver so Moonlight clients can connect to the VM at more than 60 FPS.
 
 ## Important Settings
 
@@ -40,6 +42,8 @@ The script can download the Windows ISO automatically. You can also download the
 - A separate BitLocker-protected data disk is created for confidential files.
 - Dynamic memory and automatic checkpoints are disabled.
 - No checkpoints are created by default.
+- GPU-PV is controlled by `gpuPv.enabled` in `config\windows.json`.
+- Moonlight streaming is controlled by `remoteStreaming.enabled` in `config\windows.json` and exposes Sunshine only on the VM network.
 
 ## Prepare Host
 
@@ -66,6 +70,24 @@ Set-ExecutionPolicy -Scope Process Bypass; .\create-workstation-vm.ps1 --config 
 Edit `config\windows.json` first if you want a different VM name, RAM, CPU count, disk size or install path.
 By default, an existing VM or disk is not deleted. Set `recreate` to `true` only when you intentionally want to replace it.
 
+The default config enables GPU-PV and Moonlight streaming. If you do not want the VM to receive a host GPU partition, set this before running the create script:
+
+```json
+"gpuPv": {
+  "enabled": false
+}
+```
+
+If you also do not want Sunshine and Virtual Display Driver installed for Moonlight streaming, disable the streaming stack too:
+
+```json
+"remoteStreaming": {
+  "enabled": false
+}
+```
+
+Disabling only `gpuPv.enabled` skips the Hyper-V GPU partition and guest GPU driver copy. Disabling `remoteStreaming.enabled` skips Sunshine, Virtual Display Driver and the Moonlight firewall rules.
+
 The generated login is written to:
 
 ```text
@@ -73,6 +95,7 @@ $HOME\VMs\WorkstationWindows11\credentials.txt
 ```
 
 The file contains the VM username, password and data disk BitLocker password. VMConnect should reconnect to the already unlocked local session after the guest boots. Use this login for RDP, PowerShell Direct or manual sign-in when needed.
+When Moonlight streaming is enabled, the same file also contains the Sunshine web UI login, Moonlight host address and Sunshine web UI URL.
 Print it from PowerShell with:
 
 ```powershell
@@ -92,6 +115,30 @@ Check the VM:
 ```powershell
 .\check-workstation-vm.ps1 --config config\windows.json
 ```
+
+## Moonlight Streaming
+
+The default `config\windows.json` enables a local Sunshine endpoint for Moonlight:
+
+- Sunshine is installed as a Windows service inside the VM.
+- Virtual Display Driver is installed inside the VM and configured with one virtual display.
+- Sunshine firewall rules are opened for the VM network.
+- Sunshine credentials and the current VM IP are written to `credentials.txt`.
+- GPU-PV is applied after Windows bootstrap when `gpuPv.enabled` is `true`.
+
+Install Moonlight on the client machine, add the VM IP from `MoonlightHost`, then pair it. When Moonlight shows a PIN, submit it from the host:
+
+```powershell
+.\pair-moonlight.ps1 --config config\windows.json --pin <moonlight-pin> --name <client-name>
+```
+
+Open the Sunshine web UI if you want to inspect or tune it:
+
+```text
+https://<vm-ip>:47990
+```
+
+The Sunshine username and password are in `credentials.txt`. Keep them private. Use Moonlight's client settings to request 120 FPS or another refresh rate.
 
 ## Changing VM Settings
 
@@ -174,7 +221,52 @@ The bootstrap tunes the VM for stable 60 FPS VMConnect Enhanced Session and RDP 
 
 The guest also disables automatic sleep, hibernation, display power-off, screensaver lock, idle lock and RDP idle/disconnect time limits. BitLocker on the data disk remains separate and still requires the generated data disk BitLocker password after a guest restart.
 
-Higher refresh rates are not expected through the standard Hyper-V VMConnect or RDP path without GPU passthrough. GPU passthrough is intentionally not configured by this setup because it is hardware-specific and changes how the host and VM share the GPU.
+Higher refresh rates are not expected through the standard Hyper-V VMConnect or RDP path. Use the Sunshine/Moonlight path when `remoteStreaming.enabled` is on. GPU-PV gives the guest a partition of the host GPU, while Virtual Display Driver gives Sunshine a display mode that Moonlight can drive above 60 FPS.
+
+## GPU-PV
+
+GPU-PV can share part of a compatible host GPU with the VM. `create-workstation-vm.ps1` applies it when `gpuPv.enabled` is `true` in `config\windows.json`. You can also run the helper manually against an existing VM.
+
+Edit:
+
+```text
+config\gpu.json
+```
+
+The default allocation is conservative:
+
+```json
+{
+  "vmName": "WorkstationW11",
+  "credentialsPath": "~/VMs/WorkstationWindows11/credentials.txt",
+  "gpuName": "AUTO",
+  "allocationPercent": 25
+}
+```
+
+Check compatibility without changing the VM:
+
+```powershell
+.\enable-gpu-pv.ps1 --config config\gpu.json --check
+```
+
+Apply or update GPU-PV:
+
+```powershell
+.\enable-gpu-pv.ps1 --config config\gpu.json
+```
+
+Running the script again updates the existing GPU-PV adapter allocation. For example, changing `allocationPercent` from `25` to `30` and running the script again updates the adapter instead of adding another one. Existing driver files are not refreshed while GPU-PV is active because the guest may have them loaded.
+
+Disable GPU-PV:
+
+```powershell
+.\enable-gpu-pv.ps1 --config config\gpu.json --disable
+```
+
+The helper asks the guest to shut down cleanly through PowerShell Direct, copies the current host GPU driver files into the guest system disk, configures the Hyper-V GPU partition adapter, then restarts the VM if it was running before. It does not force power off, delete or recreate the VM.
+
+GPU-PV is hardware and driver dependent. After updating the host GPU driver, disable GPU-PV, boot the VM once without it, then apply GPU-PV again so the guest receives a fresh driver copy. If the guest display or GPU driver behaves badly, run the helper with `--disable`.
 
 ## Optional Debloat
 

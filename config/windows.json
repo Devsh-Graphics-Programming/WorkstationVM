@@ -15,6 +15,25 @@
   "sshEnabled": true,
   "displayWidth": "",
   "displayHeight": "",
+  "gpuPv": {
+    "enabled": true,
+    "gpuName": "AUTO",
+    "allocationPercent": 25
+  },
+  "remoteStreaming": {
+    "enabled": true,
+    "installSunshine": true,
+    "installVirtualDisplayDriver": true,
+    "sunshineUser": "",
+    "sunshinePassword": "",
+    "sunshineName": "WorkstationW11",
+    "port": 47989,
+    "displayWidth": 1920,
+    "displayHeight": 1080,
+    "refreshRate": 120,
+    "virtualDisplayCount": 1,
+    "openFirewall": true
+  },
   "recreate": false,
   "windowsIsoPath": "",
   "windowsRelease": "Latest",
