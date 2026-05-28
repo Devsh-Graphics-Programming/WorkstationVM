@@ -205,12 +205,50 @@ function PackageDestination($packageRoot, $destination) {
 function GetWmiObjects($class) {
     for ($i = 0; $i -lt 5; $i++) {
         try {
-            return @(Get-WmiObject $class -ErrorAction Stop)
+            if (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
+                return @(Get-WmiObject $class -ErrorAction Stop)
+            }
+            return @(Get-CimInstance -ClassName $class -ErrorAction Stop)
         } catch {
             if ($i -eq 4) { throw }
             Start-Sleep -Seconds 5
         }
     }
+}
+
+function ObjectPropertyValue($object, $name) {
+    if ($null -eq $object) { return $null }
+    $property = $object.PSObject.Properties[$name]
+    if ($property) { return $property.Value }
+    return $null
+}
+
+function ObjectPathText($object) {
+    if ($null -eq $object) { return "" }
+    if ($object -is [string]) { return [string]$object }
+
+    $path = ObjectPropertyValue $object "__PATH"
+    if (-not [string]::IsNullOrWhiteSpace([string]$path)) { return [string]$path }
+
+    return [string]$object
+}
+
+function DriverReferenceMatches($antecedent, $deviceId, $pathText) {
+    $antecedentDeviceId = ObjectPropertyValue $antecedent "DeviceID"
+    if (-not [string]::IsNullOrWhiteSpace([string]$antecedentDeviceId)) {
+        return [string]$antecedentDeviceId -ieq [string]$deviceId
+    }
+
+    return (ObjectPathText $antecedent) -eq $pathText
+}
+
+function DriverFilePath($dependent) {
+    $name = ObjectPropertyValue $dependent "Name"
+    if (-not [string]::IsNullOrWhiteSpace([string]$name)) { return [string]$name }
+
+    $pathText = ObjectPathText $dependent
+    if ($pathText -notmatch '=') { return "" }
+    return ($pathText.Split("=")[1] -replace "\\\\", "\").Trim('"')
 }
 
 function CopyDirectoryContents($packageRoot, $source, $destination) {
@@ -254,12 +292,13 @@ function CopyGpuDrivers($packageRoot, $guestRoot, $gpu) {
     }
 
     foreach ($driver in $drivers) {
-        $deviceId = $driver.DeviceID.Replace("\", "\\")
-        $antecedent = "\\" + $env:COMPUTERNAME + "\ROOT\cimv2:Win32_PNPSignedDriver.DeviceID=`"$deviceId`""
+        $deviceId = [string]$driver.DeviceID
+        $escapedDeviceId = $deviceId.Replace("\", "\\")
+        $antecedent = "\\" + $env:COMPUTERNAME + "\ROOT\cimv2:Win32_PNPSignedDriver.DeviceID=`"$escapedDeviceId`""
         if ($null -eq $allDriverFiles) { $allDriverFiles = @(GetWmiObjects Win32_PNPSignedDriverCIMDataFile) }
-        $driverFiles = @($allDriverFiles | Where-Object { $_.Antecedent -eq $antecedent })
+        $driverFiles = @($allDriverFiles | Where-Object { DriverReferenceMatches $_.Antecedent $deviceId $antecedent })
         foreach ($file in $driverFiles) {
-            $sourcePath = ($file.Dependent.Split("=")[1] -replace "\\\\", "\").Trim('"')
+            $sourcePath = DriverFilePath $file.Dependent
             if (-not (Test-Path -LiteralPath $sourcePath)) { continue }
 
             $driverStoreDestination = DriverStoreDestination $guestRoot $sourcePath.ToLowerInvariant()
@@ -286,10 +325,20 @@ function CopyGpuDrivers($packageRoot, $guestRoot, $gpu) {
     }
 }
 
+function GetGuestServiceIntegration($vmName) {
+    $vm = Get-VM -Name $vmName -ErrorAction Stop
+    $guestServiceId = "Microsoft:$($vm.Id)\6C09BB55-D683-4DA0-8931-C9BF705F6480"
+    $service = Get-VMIntegrationService -VMName $vmName |
+        Where-Object { $_.Id -eq $guestServiceId } |
+        Select-Object -First 1
+    if (-not $service) { throw "Hyper-V Guest Service Interface integration service was not found for VM '$vmName'." }
+    return $service
+}
+
 function CopyGpuDriversOnline($cfg, $gpu) {
     $vm = Get-VM -Name $cfg.vmName
     if ($vm.State -ne "Running") { throw "VM '$($cfg.vmName)' must be running so driver files can be copied through Hyper-V Guest Service." }
-    $service = Get-VMIntegrationService -VMName $cfg.vmName -Name "Guest Service Interface"
+    $service = GetGuestServiceIntegration $cfg.vmName
     $wasEnabled = [bool]$service.Enabled
     $packageRoot = Join-Path ([IO.Path]::GetTempPath()) ("WorkstationVM-GpuPv-" + [guid]::NewGuid().ToString("N"))
     $zipPath = "$packageRoot.zip"
@@ -299,7 +348,7 @@ function CopyGpuDriversOnline($cfg, $gpu) {
         New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
         $summary = CopyGpuDrivers $packageRoot "C:\" $gpu
         Compress-Archive -Path (Join-Path $packageRoot "*") -DestinationPath $zipPath -Force
-        if (-not $wasEnabled) { Enable-VMIntegrationService -VMName $cfg.vmName -Name "Guest Service Interface" }
+        if (-not $wasEnabled) { GetGuestServiceIntegration $cfg.vmName | Enable-VMIntegrationService }
         Write-Host "Copying packaged driver files through Hyper-V Guest Service..."
         Copy-VMFile -Name $cfg.vmName -SourcePath $zipPath -DestinationPath $guestZipPath -FileSource Host -CreateFullPath -Force
         Invoke-Command -VMName $cfg.vmName -Credential (GuestCredential $cfg) -ArgumentList $guestZipPath -ScriptBlock {
@@ -309,7 +358,7 @@ function CopyGpuDriversOnline($cfg, $gpu) {
         } | Out-Null
         return $summary
     } finally {
-        if (-not $wasEnabled) { Disable-VMIntegrationService -VMName $cfg.vmName -Name "Guest Service Interface" }
+        if (-not $wasEnabled) { GetGuestServiceIntegration $cfg.vmName | Disable-VMIntegrationService }
         if (Test-Path -LiteralPath $packageRoot) { Remove-Item -LiteralPath $packageRoot -Recurse -Force }
         if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
     }
