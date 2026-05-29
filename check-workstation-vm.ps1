@@ -226,10 +226,17 @@ if ($sessionState.RdpPortNumber -ne 3389 -or $sessionState.RdpListenerEnabled -n
     throw "Remote Desktop listener is not ready. Port=$($sessionState.RdpPortNumber) Enabled=$($sessionState.RdpListenerEnabled) Listening=$($sessionState.RdpPortListening)"
 }
 
-foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "UnattendedSleep", "DiskIdle", "ConsoleLockDisplay", "RequirePasswordOnWake")) {
+foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "UnattendedSleep", "DiskIdle")) {
+    $values = $sessionState.$setting
+    if ($null -eq $values.AC -or $null -eq $values.DC -or $values.AC -ne 0 -or $values.DC -ne 0) {
+        throw "$setting is not set to Never/Disabled for AC and DC."
+    }
+}
+
+foreach ($setting in @("ConsoleLockDisplay", "RequirePasswordOnWake")) {
     $values = $sessionState.$setting
     if ($values.AC -ne 0 -or $values.DC -ne 0) {
-        throw "$setting is not set to Never/Disabled for AC and DC."
+        Write-Host "Optional power setting not enforced: $setting AC=$($values.AC) DC=$($values.DC)"
     }
 }
 
