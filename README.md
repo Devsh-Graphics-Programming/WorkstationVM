@@ -73,7 +73,18 @@ Run from normal PowerShell **without Administrator privileges**:
 Set-ExecutionPolicy -Scope Process Bypass; .\create-workstation-vm.ps1 --config config\windows.json
 ```
 
-Edit `config\windows.json` first if you want a different VM name, RAM, CPU count, disk size or install path.
+Before running the script, open `config\windows.json` and make sure the VM name, disk sizes, RAM, CPU count and install paths match the host PC. The default config creates a VM with 4 vCPU, 8 GB RAM, a 128 GB OS disk and a 64 GB BitLocker data disk.
+
+To place the VM files and Windows ISO cache on another disk, set paths like:
+
+```json
+"baseDir": "D:\\VMs\\WorkstationWindows11",
+"imageCacheDir": "D:\\VMs\\_image-cache\\windows"
+```
+
+This also works on ReFS volumes, including Windows Dev Drive.
+
+Edit `config\windows.json` first if you want a different VM name, RAM, CPU count, disk size or install path. `vmName` is also used as the Windows computer name inside the guest, so keep it at 15 characters or fewer.
 By default, an existing VM or disk is not deleted. Set `recreate` to `true` only when you intentionally want to replace it.
 
 The default config enables GPU-PV and Moonlight streaming. If you do not want the VM to receive a host GPU partition, set this before running the create script:
@@ -144,7 +155,7 @@ The setup creates a second dynamic data disk by default:
 - File system label: `WorkData`
 - BitLocker: enabled with used-space-only encryption
 
-Use this disk for confidential work files such as VPN configs, client-provided documents, keys or other sensitive working data.
+Use this disk for confidential work files such as VPN profiles, VPN configs, client-provided documents or other sensitive working data.
 
 The BitLocker password is generated during bootstrap and written to `credentials.txt` under `baseDir`. After a VM restart, unlock the disk from Windows Explorer or with:
 
@@ -271,6 +282,8 @@ Unofficial activation tools are outside the scope of this setup. They bypass off
 If a customer provides a VPN profile or config, import and enable it inside this VM only. Do not enable customer VPN profiles on the host.
 
 The default Hyper-V network uses NAT, so host traffic and VM traffic stay on separate network paths.
+
+When this VM is used as a ProxyJump bastion, keep SSH identities on the host PC. The workstation VM only runs the customer VPN and opens the target-side TCP connection. The host SSH client authenticates to both the jump VM and the customer target using host-side private key files or a host-side SSH agent.
 
 ## RDP
 

@@ -531,6 +531,11 @@ $cfg = Get-Content -Raw (FullPath $configPath) | ConvertFrom-Json
     wingetPackages = @("Microsoft.VisualStudioCode", "Git.Git", "WireGuard.WireGuard", "TorProject.TorBrowser")
 }.GetEnumerator() | ForEach-Object { Default $cfg $_.Key $_.Value }
 
+$cfg.vmName = [string]$cfg.vmName
+if ($cfg.vmName.Length -gt 15) {
+    throw "vmName '$($cfg.vmName)' is too long. Windows ComputerName is limited to 15 characters because vmName is used as the guest computer name."
+}
+
 if ([string]::IsNullOrWhiteSpace($cfg.password)) { $cfg.password = Password }
 Log "Preparing workstation VM '$($cfg.vmName)'"
 
