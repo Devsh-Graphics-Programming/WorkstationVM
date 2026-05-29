@@ -112,7 +112,7 @@ When the script finishes successfully, the VM is ready to use and the output loo
 
 ![Ready VM output](misc/vmready.png)
 
-If an existing VM was created before the current session policy fixes and `check-workstation-vm.ps1` reports power or lock policy drift, repair the running VM without deleting or recreating it:
+If `check-workstation-vm.ps1` reports power or lock policy drift, repair the running VM without deleting or recreating it:
 
 ```powershell
 .\set-workstation-session-policy.ps1 --config config\windows.json
