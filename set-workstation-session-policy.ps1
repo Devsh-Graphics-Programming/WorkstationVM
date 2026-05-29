@@ -164,16 +164,6 @@ $state = Invoke-Command -VMName $cfg.vmName -Credential (GuestCredential $cfg) -
 
     RunPowerCfg @("/hibernate", "off")
 
-    $schemesRoot = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes"
-    $schemes = @(Get-ChildItem -Path $schemesRoot -ErrorAction SilentlyContinue |
-        Where-Object { $_.PSChildName -match '^[0-9a-fA-F-]{36}$' } |
-        Select-Object -ExpandProperty PSChildName)
-    if ($schemes.Count -eq 0) { $schemes = @("SCHEME_CURRENT") }
-
-    foreach ($scheme in $schemes) {
-        SetWorkstationPowerValues $scheme
-    }
-
     RunPowerCfg @("/setactive", "SCHEME_MIN")
     SetWorkstationPowerValues "SCHEME_CURRENT"
     DisableAutomaticLock
