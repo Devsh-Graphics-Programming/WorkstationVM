@@ -457,16 +457,27 @@ if ([bool]$streaming.enabled) {
     if ($streamingState.VirtualDisplayStatus -ne "OK") { throw "Virtual Display Driver status is $($streamingState.VirtualDisplayStatus)." }
     if (-not $streamingState.WebPortListening) { throw "Sunshine Web UI is not listening in the guest." }
 
-    $ip = VmIPv4Addresses $cfg.vmName | Select-Object -First 1
-    if (-not $ip) { throw "No usable VM IPv4 address found for Sunshine." }
+    $ips = @(VmIPv4Addresses $cfg.vmName)
+    if (-not $ips) { throw "No usable VM IPv4 address found for Sunshine." }
     $webPort = [int]$streaming.port + 1
-    if (-not (TestTcpPort $ip $webPort)) { throw "Sunshine Web UI is not reachable from host at $ip`:$webPort." }
-    $apiProbe = TestSunshineApi $ip $webPort $credentialValues["SunshineUser"] $credentialValues["SunshinePassword"] "/api/config"
-    if ($apiProbe.Ok) {
-        Write-Host "Sunshine API reachable via $($apiProbe.Method)"
-    } else {
-        Write-Host "Sunshine API probe warning: $($apiProbe.Message)"
+    $sunshineOk = $false
+    $sunshineIp = ""
+    $lastApiProbe = $null
+    foreach ($ip in $ips) {
+        if (-not (TestTcpPort $ip $webPort)) { continue }
+        $apiProbe = TestSunshineApi $ip $webPort $credentialValues["SunshineUser"] $credentialValues["SunshinePassword"] "/api/config"
+        $lastApiProbe = $apiProbe
+        if ($apiProbe.Ok) {
+            $sunshineIp = $ip
+            $sunshineOk = $true
+            Write-Host "Sunshine API reachable via $($apiProbe.Method)"
+            break
+        }
+    }
+    if (-not $sunshineOk) {
+        if ($lastApiProbe) { Write-Host "Sunshine API probe warning: $($lastApiProbe.Message)" }
+        throw "Sunshine Web UI is not reachable from host on any VM IP at port $webPort."
     }
 
-    Write-Host "Moonlight streaming ready: https://${ip}:$webPort"
+    Write-Host "Moonlight streaming ready: https://${sunshineIp}:$webPort"
 }

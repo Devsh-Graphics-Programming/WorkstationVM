@@ -303,6 +303,59 @@ Double-click that file to connect with `mstsc.exe`. The file contains the curren
 
 If you want to use RDP as the main UI, consider checking out [Upinel/BetterRDP](https://github.com/Upinel/BetterRDP) and applying its `.reg` file **on the host, not inside the VM**. It tunes the RDP experience by enabling GPU/RemoteFX policies, 60 FPS capture/DWM settings, AVC444/hardware encode preference, image quality, latency and bandwidth-related registry settings. This is optional and is not vendored here.
 
+## Private Management Access
+
+If a full-tunnel VPN inside the VM blocks normal host-to-VM access, add a private Hyper-V management link.
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass; .\configure-workstation-management.ps1 --config config\windows.json
+```
+
+Run this post-script from PowerShell **as Administrator** on the host. It is safe to run repeatedly.
+
+The script creates an internal Hyper-V switch, attaches a second VM network adapter and configures a private host-to-VM subnet.
+
+```text
+Host 192.168.250.1/24
+VM   192.168.250.2/24
+```
+
+The management network is intentionally not routed. The script does not configure NAT, DNS, a default gateway, ICS, bridging or IP forwarding on this link. This keeps the host and VM isolated. The host can reach selected VM services, but the VM does not become a router and customer VPN traffic is not routed back into the host.
+
+The script scopes management services to the private link.
+
+- RDP is allowed from `192.168.250.1` to port `3389` on `192.168.250.2`.
+- SSH is allowed from `192.168.250.1` to port `22` on `192.168.250.2` when `sshEnabled` is enabled.
+- Sunshine/Moonlight ports are allowed from `192.168.250.1` to `192.168.250.2` when `remoteStreaming.enabled` and `remoteStreaming.installSunshine` are enabled.
+
+Broad default firewall rules for those services are disabled after the scoped management rules are created.
+
+The script updates the normal RDP shortcut to use the management IP.
+
+```text
+$HOME\VMs\WorkstationWindows11\WorkstationW11.rdp
+```
+
+If you later want the RDP shortcut to point back to the VM's Default Switch address, run this.
+
+```powershell
+.\write-rdp-file.ps1 --config config\windows.json
+```
+
+For SSH through the management link, use `192.168.250.2` as the jump VM address. For Moonlight, manually add `192.168.250.2` in the Moonlight client if auto-discovery does not show the VM.
+
+When a running WireGuard tunnel uses exact `AllowedIPs = 0.0.0.0/0`, WireGuard for Windows can enforce full-tunnel behavior that blocks local host-to-VM management access. The script handles only the active WireGuard tunnel services inside the VM. It reads each `WireGuardTunnel$...` service command line, resolves the `/tunnelservice <config-path>` file, backs it up as `<config-path>.management-backup`, and changes only exact `0.0.0.0/0` entries to split default routes.
+
+```text
+0.0.0.0/1, 128.0.0.0/1
+```
+
+Normal IPv4 traffic still routes through the VPN, while the local `192.168.250.0/24` management subnet remains reachable. To leave WireGuard configs untouched, add this.
+
+```powershell
+--skip-wireguard-route-fix
+```
+
 ## Moonlight Streaming (OPTIONAL if you want more than 60 FPS)
 
 The default `config\windows.json` enables a local Sunshine endpoint for Moonlight:
@@ -326,11 +379,17 @@ The setup installs the Sunshine server inside the VM. To use Moonlight from the 
    - Optimize mouse for remote desktop instead of games: enabled.
    - Video decoder and video codec: `Automatic`.
 3. Do not leave Moonlight at its default `720p` and low bitrate settings. That makes the VM look blurry because Moonlight upscales a low-resolution stream.
-4. If Moonlight auto-discovers the VM, click the locked VM tile. If it does not show up automatically, add the VM IP from `MoonlightHost` manually.
+4. If Moonlight auto-discovers the VM, click the locked VM tile. If it does not show up automatically, add the VM IP from `MoonlightHost` manually. If `configure-workstation-management.ps1` was used, add the management IP `192.168.250.2`.
 5. When Moonlight shows a PIN, submit it from the host:
 
 ```powershell
 .\pair-moonlight.ps1 --config config\windows.json --pin <moonlight-pin> --name <client-name>
+```
+
+If pairing through the private management link, pass the same management IP explicitly:
+
+```powershell
+.\pair-moonlight.ps1 --config config\windows.json --pin <moonlight-pin> --name <client-name> --host 192.168.250.2
 ```
 
 After pairing, click the VM tile again and start `Desktop`. If the image is blurry, stop the stream, re-check Moonlight's resolution and bitrate settings, then start `Desktop` again. Enable Moonlight's performance stats when troubleshooting and confirm that the stream is negotiated at the expected resolution and FPS.
