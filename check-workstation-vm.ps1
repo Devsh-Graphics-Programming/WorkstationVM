@@ -155,22 +155,13 @@ $sessionState = Invoke-Command -VMName $cfg.vmName -Credential $credential -Argu
     }
 
     function PowerValues($subgroup, $setting) {
-        $ac = $null
-        $dc = $null
-        $output = powercfg /query SCHEME_CURRENT $subgroup $setting 2>$null
-        if (-not ($output | Select-String -Pattern "Current AC Power Setting Index" -Quiet)) {
-            $output = powercfg /qh SCHEME_CURRENT $subgroup $setting 2>$null
-        }
-        foreach ($line in $output) {
-            if ($line -match "Current AC Power Setting Index:\s+0x([0-9a-fA-F]+)") {
-                $ac = [Convert]::ToInt64($Matches[1], 16)
-            } elseif ($line -match "Current DC Power Setting Index:\s+0x([0-9a-fA-F]+)") {
-                $dc = [Convert]::ToInt64($Matches[1], 16)
-            }
-        }
+        $root = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes"
+        $active = [string](RegistryValue $root ActivePowerScheme)
+        $path = Join-Path $root (Join-Path $active (Join-Path $subgroup $setting))
+        $values = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
         [pscustomobject]@{
-            AC = $ac
-            DC = $dc
+            AC = if ($values -and ($values.PSObject.Properties.Name -contains "ACSettingIndex")) { [int64]$values.ACSettingIndex } else { $null }
+            DC = if ($values -and ($values.PSObject.Properties.Name -contains "DCSettingIndex")) { [int64]$values.DCSettingIndex } else { $null }
         }
     }
 
@@ -202,10 +193,12 @@ $sessionState = Invoke-Command -VMName $cfg.vmName -Credential $credential -Argu
         RdpPortNumber = [int](RegistryValue $rdpTcp PortNumber)
         RdpListenerEnabled = [int](RegistryValue $rdpTcp fEnableWinStation)
         RdpPortListening = [bool](Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue)
-        VideoIdle = PowerValues SUB_VIDEO VIDEOIDLE
-        StandbyIdle = PowerValues SUB_SLEEP STANDBYIDLE
-        HibernateIdle = PowerValues SUB_SLEEP HIBERNATEIDLE
-        DiskIdle = PowerValues SUB_DISK DISKIDLE
+        VideoIdle = PowerValues "7516b95f-f776-4464-8c53-06167f40cc99" "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e"
+        StandbyIdle = PowerValues "238c9fa8-0aad-41ed-83f4-97be242c8f20" "29f6c1db-86da-48c5-9fdb-f2b67b1f44da"
+        HibernateIdle = PowerValues "238c9fa8-0aad-41ed-83f4-97be242c8f20" "9d7815a6-7ee4-497e-8888-515a05f02364"
+        UnattendedSleep = PowerValues "238c9fa8-0aad-41ed-83f4-97be242c8f20" "7bc4a2f9-d8fc-4469-b07b-33eb785aaca0"
+        DiskIdle = PowerValues "0012ee47-9041-4b5d-9b77-535fba8b1442" "6738e2c4-e8a5-4a42-b16a-e040e769756e"
+        ConsoleLockDisplay = PowerValues "7516b95f-f776-4464-8c53-06167f40cc99" "8ec4b3a5-6868-48c2-be75-4f3044be88a7"
         RequirePasswordOnWake = PowerValues "fea3413e-7e05-4911-9a71-700331f1c294" "0e796bdb-100d-47d6-a2d5-f7d2daa51f51"
     }
 }
@@ -233,7 +226,7 @@ if ($sessionState.RdpPortNumber -ne 3389 -or $sessionState.RdpListenerEnabled -n
     throw "Remote Desktop listener is not ready. Port=$($sessionState.RdpPortNumber) Enabled=$($sessionState.RdpListenerEnabled) Listening=$($sessionState.RdpPortListening)"
 }
 
-foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "DiskIdle", "RequirePasswordOnWake")) {
+foreach ($setting in @("VideoIdle", "StandbyIdle", "HibernateIdle", "UnattendedSleep", "DiskIdle", "ConsoleLockDisplay", "RequirePasswordOnWake")) {
     $values = $sessionState.$setting
     if ($values.AC -ne 0 -or $values.DC -ne 0) {
         throw "$setting is not set to Never/Disabled for AC and DC."

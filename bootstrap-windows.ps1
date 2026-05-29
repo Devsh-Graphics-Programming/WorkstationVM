@@ -91,31 +91,44 @@ function TuneRemoteDesktop {
 }
 
 function TunePowerPlan {
-    powercfg /hibernate off | Out-Null
+    function RunPowerCfg($arguments) {
+        & powercfg.exe @arguments | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "powercfg $($arguments -join ' ') failed with exit code $LASTEXITCODE." }
+    }
 
-    $schemes = @(powercfg /list | ForEach-Object {
-        if ($_ -match "Power Scheme GUID:\s+([0-9a-fA-F-]{36})") { $Matches[1] }
-    })
+    function SetPowerValue($scheme, $subgroup, $setting) {
+        RunPowerCfg @("/setacvalueindex", $scheme, $subgroup, $setting, "0")
+        RunPowerCfg @("/setdcvalueindex", $scheme, $subgroup, $setting, "0")
+    }
+
+    function SetWorkstationPowerValues($scheme) {
+        foreach ($entry in @(
+            @{ Subgroup = "7516b95f-f776-4464-8c53-06167f40cc99"; Setting = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e" },
+            @{ Subgroup = "238c9fa8-0aad-41ed-83f4-97be242c8f20"; Setting = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da" },
+            @{ Subgroup = "238c9fa8-0aad-41ed-83f4-97be242c8f20"; Setting = "9d7815a6-7ee4-497e-8888-515a05f02364" },
+            @{ Subgroup = "238c9fa8-0aad-41ed-83f4-97be242c8f20"; Setting = "7bc4a2f9-d8fc-4469-b07b-33eb785aaca0" },
+            @{ Subgroup = "0012ee47-9041-4b5d-9b77-535fba8b1442"; Setting = "6738e2c4-e8a5-4a42-b16a-e040e769756e" },
+            @{ Subgroup = "7516b95f-f776-4464-8c53-06167f40cc99"; Setting = "8ec4b3a5-6868-48c2-be75-4f3044be88a7" },
+            @{ Subgroup = "fea3413e-7e05-4911-9a71-700331f1c294"; Setting = "0e796bdb-100d-47d6-a2d5-f7d2daa51f51" }
+        )) {
+            SetPowerValue $scheme $entry.Subgroup $entry.Setting
+        }
+    }
+
+    RunPowerCfg @("/hibernate", "off")
+
+    $schemesRoot = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes"
+    $schemes = @(Get-ChildItem -Path $schemesRoot -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^[0-9a-fA-F-]{36}$' } |
+        Select-Object -ExpandProperty PSChildName)
     if ($schemes.Count -eq 0) { $schemes = @("SCHEME_CURRENT") }
 
     foreach ($scheme in $schemes) {
-        powercfg /setacvalueindex $scheme SUB_VIDEO VIDEOIDLE 0 | Out-Null
-        powercfg /setdcvalueindex $scheme SUB_VIDEO VIDEOIDLE 0 | Out-Null
-        powercfg /setacvalueindex $scheme SUB_SLEEP STANDBYIDLE 0 | Out-Null
-        powercfg /setdcvalueindex $scheme SUB_SLEEP STANDBYIDLE 0 | Out-Null
-        powercfg /setacvalueindex $scheme SUB_SLEEP HIBERNATEIDLE 0 | Out-Null
-        powercfg /setdcvalueindex $scheme SUB_SLEEP HIBERNATEIDLE 0 | Out-Null
-        powercfg /setacvalueindex $scheme SUB_SLEEP 7bc4a2f9-d8fc-4469-b07b-33eb785aaca0 0 | Out-Null
-        powercfg /setdcvalueindex $scheme SUB_SLEEP 7bc4a2f9-d8fc-4469-b07b-33eb785aaca0 0 | Out-Null
-        powercfg /setacvalueindex $scheme SUB_DISK DISKIDLE 0 | Out-Null
-        powercfg /setdcvalueindex $scheme SUB_DISK DISKIDLE 0 | Out-Null
-        powercfg /setacvalueindex $scheme SUB_VIDEO 8ec4b3a5-6868-48c2-be75-4f3044be88a7 0 | Out-Null
-        powercfg /setdcvalueindex $scheme SUB_VIDEO 8ec4b3a5-6868-48c2-be75-4f3044be88a7 0 | Out-Null
-        powercfg /setacvalueindex $scheme fea3413e-7e05-4911-9a71-700331f1c294 0e796bdb-100d-47d6-a2d5-f7d2daa51f51 0 | Out-Null
-        powercfg /setdcvalueindex $scheme fea3413e-7e05-4911-9a71-700331f1c294 0e796bdb-100d-47d6-a2d5-f7d2daa51f51 0 | Out-Null
+        SetWorkstationPowerValues $scheme
     }
 
-    powercfg /setactive SCHEME_MIN | Out-Null
+    RunPowerCfg @("/setactive", "SCHEME_MIN")
+    SetWorkstationPowerValues "SCHEME_CURRENT"
 }
 
 function DisableAutomaticLock {
