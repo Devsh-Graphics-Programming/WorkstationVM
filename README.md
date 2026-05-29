@@ -191,6 +191,14 @@ Run this from the host after the VM exists. PowerShell must be running as Admini
 
 Keep the exported recovery key in a password manager. Do not store the only copy next to the VM disks. The OS disk unlocks automatically through vTPM during normal boot. The separate `W:` data disk still uses its own BitLocker password and remains the preferred place for customer secrets and files.
 
+For stationary desktop hosts, TPM-only auto-unlock is usually the best tradeoff because the host OS should already be BitLocker-protected and the VM can boot unattended. For laptops or travel setups where the whole host may be physically taken while powered on or unlocked, add a startup PIN:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass; .\enable-os-bitlocker.ps1 --config config\windows.json --recovery-key-path <secure-host-directory-or-file> --require-startup-pin
+```
+
+The script asks for the PIN interactively so it is not placed in shell history. In startup PIN mode, the VM stops at the BitLocker pre-boot prompt after restart. Hyper-V Connect is needed to enter the PIN before RDP, SSH, Moonlight or PowerShell Direct can reach the guest. To return to TPM-only auto-unlock, run the script again without `--require-startup-pin`.
+
 ## Default Software
 
 The first-login bootstrap installs these tools inside the VM by default:

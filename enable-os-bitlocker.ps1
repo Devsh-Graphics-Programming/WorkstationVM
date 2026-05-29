@@ -7,6 +7,13 @@ function ArgValue($name, $defaultValue = "") {
     return $defaultValue
 }
 
+function Flag($name) {
+    for ($i = 0; $i -lt $scriptArgs.Count; $i++) {
+        if ($scriptArgs[$i] -in @("-$name", "--$name")) { return $true }
+    }
+    return $false
+}
+
 function FullPath($path) {
     $path = [Environment]::ExpandEnvironmentVariables([string]$path)
     if ($path -match '^~[\\/](.*)$') { return (Join-Path $HOME $Matches[1]) }
@@ -34,6 +41,25 @@ function SecureText($text) {
     foreach ($ch in ([string]$text).ToCharArray()) { $secure.AppendChar($ch) }
     $secure.MakeReadOnly()
     return $secure
+}
+
+function PlainTextFromSecureString($secure) {
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+}
+
+function StartupPinValue {
+    $pinFile = ArgValue "startup-pin-file"
+    if (-not [string]::IsNullOrWhiteSpace($pinFile)) {
+        return (Get-Content -Raw -LiteralPath (FullPath $pinFile)).Trim()
+    }
+
+    $pin = Read-Host "BitLocker startup PIN for the VM OS disk" -AsSecureString
+    PlainTextFromSecureString $pin
 }
 
 function GuestCredential($cfg) {
@@ -145,8 +171,10 @@ function SecureFileForCurrentUser($path) {
     & icacls.exe $path /inheritance:r /grant:r "${user}:F" | Out-Null
 }
 
-function EnableGuestOsBitLocker($cfg, $credential) {
-    Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
+function EnableGuestOsBitLocker($cfg, $credential, $requireStartupPin, $startupPin) {
+    Invoke-Command -VMName $cfg.vmName -Credential $credential -ArgumentList $requireStartupPin, $startupPin -ScriptBlock {
+        param($requireStartupPin, $startupPin)
+
         $mountPoint = "C:"
 
         function RefreshVolume {
@@ -157,9 +185,43 @@ function EnableGuestOsBitLocker($cfg, $credential) {
             @($volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq $type })
         }
 
+        function TpmPinProtectors($volume) {
+            @($volume.KeyProtector | Where-Object { [string]$_.KeyProtectorType -match '^Tpm.*Pin$|^TpmPin$|^TpmAndPin$' })
+        }
+
+        function RemoveProtectors($protectors) {
+            foreach ($protector in @($protectors)) {
+                Remove-BitLockerKeyProtector -MountPoint $mountPoint -KeyProtectorId $protector.KeyProtectorId | Out-Null
+            }
+        }
+
+        function ConfigureStartupPolicy($requirePin) {
+            $path = "HKLM:\SOFTWARE\Policies\Microsoft\FVE"
+            New-Item -Path $path -Force | Out-Null
+            function SetDword($name, $value) {
+                New-ItemProperty -Path $path -Name $name -PropertyType DWord -Value $value -Force | Out-Null
+            }
+            SetDword UseAdvancedStartup 1
+            SetDword EnableBDEWithNoTPM 0
+            SetDword UseTPM 2
+            SetDword UseTPMKey 2
+            SetDword UseTPMKeyPIN 2
+            SetDword MinimumPIN 6
+            if ($requirePin) {
+                SetDword UseTPMPIN 1
+            } else {
+                SetDword UseTPMPIN 2
+            }
+        }
+
         $tpm = Get-Tpm -ErrorAction Stop
         if (-not $tpm.TpmPresent) { throw "Guest TPM is not present." }
         if (-not $tpm.TpmReady) { throw "Guest TPM is present but not ready." }
+        if ($requireStartupPin -and $startupPin -notmatch '^\d{6,20}$') {
+            throw "Startup PIN must be 6 to 20 digits."
+        }
+
+        ConfigureStartupPolicy $requireStartupPin
 
         $volume = RefreshVolume
         $recoveryPassword = ""
@@ -167,12 +229,11 @@ function EnableGuestOsBitLocker($cfg, $credential) {
         $createdRecoveryProtector = $false
 
         if ($volume.VolumeStatus -eq "FullyDecrypted") {
-            Enable-BitLocker -MountPoint $mountPoint -UsedSpaceOnly -TpmProtector -SkipHardwareTest -WarningAction SilentlyContinue | Out-Null
-            $volume = RefreshVolume
-        }
-
-        if ((ProtectorsOfType $volume "Tpm").Count -eq 0) {
-            Add-BitLockerKeyProtector -MountPoint $mountPoint -TpmProtector -WarningAction SilentlyContinue | Out-Null
+            if ($requireStartupPin) {
+                Enable-BitLocker -MountPoint $mountPoint -UsedSpaceOnly -TpmAndPinProtector -Pin (ConvertTo-SecureString $startupPin -AsPlainText -Force) -SkipHardwareTest -WarningAction SilentlyContinue | Out-Null
+            } else {
+                Enable-BitLocker -MountPoint $mountPoint -UsedSpaceOnly -TpmProtector -SkipHardwareTest -WarningAction SilentlyContinue | Out-Null
+            }
             $volume = RefreshVolume
         }
 
@@ -180,6 +241,21 @@ function EnableGuestOsBitLocker($cfg, $credential) {
             Add-BitLockerKeyProtector -MountPoint $mountPoint -RecoveryPasswordProtector -WarningAction SilentlyContinue | Out-Null
             $volume = RefreshVolume
             $createdRecoveryProtector = $true
+        }
+
+        if ($requireStartupPin) {
+            RemoveProtectors (TpmPinProtectors $volume)
+            Add-BitLockerKeyProtector -MountPoint $mountPoint -TpmAndPinProtector -Pin (ConvertTo-SecureString $startupPin -AsPlainText -Force) -WarningAction SilentlyContinue | Out-Null
+            $volume = RefreshVolume
+            RemoveProtectors (ProtectorsOfType $volume "Tpm")
+            $volume = RefreshVolume
+        } else {
+            if ((ProtectorsOfType $volume "Tpm").Count -eq 0) {
+                Add-BitLockerKeyProtector -MountPoint $mountPoint -TpmProtector -WarningAction SilentlyContinue | Out-Null
+                $volume = RefreshVolume
+            }
+            RemoveProtectors (TpmPinProtectors $volume)
+            $volume = RefreshVolume
         }
 
         $recovery = ProtectorsOfType $volume "RecoveryPassword" | Select-Object -Last 1
@@ -209,7 +285,9 @@ function EnableGuestOsBitLocker($cfg, $credential) {
             RecoveryProtectorId = $recoveryProtectorId
             CreatedRecoveryProtector = $createdRecoveryProtector
             TpmProtectorCount = (ProtectorsOfType $volume "Tpm").Count
+            TpmPinProtectorCount = (TpmPinProtectors $volume).Count
             RecoveryProtectorCount = (ProtectorsOfType $volume "RecoveryPassword").Count
+            StartupPinRequired = [bool]$requireStartupPin
         }
     }
 }
@@ -240,6 +318,8 @@ function WaitForGuestOsBitLocker($cfg, $credential, $timeoutSeconds) {
 $configPath = ArgValue "config" "config\windows.json"
 $recoveryKeyPath = ArgValue "recovery-key-path"
 $waitTimeoutSeconds = [int](ArgValue "wait-timeout-seconds" "14400")
+$requireStartupPin = Flag "require-startup-pin"
+$startupPin = if ($requireStartupPin) { StartupPinValue } else { "" }
 if ([string]::IsNullOrWhiteSpace($recoveryKeyPath)) {
     throw "Usage: .\enable-os-bitlocker.ps1 --config config\windows.json --recovery-key-path <secure-host-directory-or-file>"
 }
@@ -260,7 +340,7 @@ EnsureNoBootableDvd $cfg.vmName
 EnsureVmTpm $cfg $credential
 WaitForPowerShellDirect $cfg $credential 300
 
-$state = EnableGuestOsBitLocker $cfg $credential
+$state = EnableGuestOsBitLocker $cfg $credential $requireStartupPin $startupPin
 $createdText = if ($state.CreatedRecoveryProtector) { "created" } else { "existing" }
 $recoveryText = @(
     "VM: $($cfg.vmName)",
@@ -272,6 +352,11 @@ $recoveryText = @(
 Set-Content -LiteralPath $recoveryFile -Value $recoveryText -Encoding ascii
 SecureFileForCurrentUser $recoveryFile
 Log "host" "Recovery key exported to $recoveryFile ($createdText protector)"
+if ($state.StartupPinRequired) {
+    Log "guest" "Startup PIN mode is enabled. The VM will require the PIN at BitLocker pre-boot after restart."
+} else {
+    Log "guest" "TPM-only mode is enabled. The OS disk auto-unlocks during normal VM boot."
+}
 
 $final = WaitForGuestOsBitLocker $cfg $credential $waitTimeoutSeconds
 if ($final.ProtectionStatus -ne "On") { throw "OS BitLocker protection is not on." }

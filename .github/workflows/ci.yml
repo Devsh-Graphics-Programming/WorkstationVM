@@ -155,7 +155,7 @@ jobs:
       - name: Configure private management access
         run: .\configure-workstation-management.ps1 --config config/windows.json
 
-      - name: Enable OS BitLocker
+      - name: Enable OS BitLocker default mode
         run: |
           $recoveryDir = Join-Path $env:RUNNER_TEMP "workstation-os-bitlocker-recovery"
           .\enable-os-bitlocker.ps1 --config config/windows.json --recovery-key-path $recoveryDir
@@ -164,6 +164,65 @@ jobs:
           if (-not (Test-Path -LiteralPath $recoveryFile)) { throw "OS BitLocker recovery key file was not written." }
           $metadata = Get-Item -LiteralPath $recoveryFile
           if ($metadata.Length -le 0) { throw "OS BitLocker recovery key file is empty." }
+
+      - name: Verify OS BitLocker auto-unlock after reboot
+        run: |
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          $secure = [Security.SecureString]::new()
+          foreach ($ch in $cfg.password.ToCharArray()) { $secure.AppendChar($ch) }
+          $secure.MakeReadOnly()
+          $credential = [pscredential]::new($cfg.user, $secure)
+          Stop-VM -Name $cfg.vmName -Shutdown
+          $deadline = (Get-Date).AddMinutes(5)
+          do {
+            Start-Sleep -Seconds 3
+            $vm = Get-VM -Name $cfg.vmName
+          } while ($vm.State -ne "Off" -and (Get-Date) -lt $deadline)
+          if ($vm.State -ne "Off") { throw "VM did not shut down for OS BitLocker reboot test." }
+          Start-VM -Name $cfg.vmName | Out-Null
+          $deadline = (Get-Date).AddMinutes(10)
+          do {
+            try {
+              Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock { "ready" } -ErrorAction Stop | Out-Null
+              $ready = $true
+              break
+            } catch {
+              Start-Sleep -Seconds 5
+            }
+          } while ((Get-Date) -lt $deadline)
+          if (-not $ready) { throw "VM did not auto-unlock after OS BitLocker reboot test." }
+          .\check-workstation-vm.ps1 --config config/windows.json
+
+      - name: Enable OS BitLocker startup PIN mode
+        run: |
+          $recoveryDir = Join-Path $env:RUNNER_TEMP "workstation-os-bitlocker-recovery"
+          $pinFile = Join-Path $env:RUNNER_TEMP "workstation-os-bitlocker-pin.txt"
+          Set-Content -LiteralPath $pinFile -Value "123456" -NoNewline
+          try {
+            .\enable-os-bitlocker.ps1 --config config/windows.json --recovery-key-path $recoveryDir --require-startup-pin --startup-pin-file $pinFile
+          } finally {
+            Remove-Item -LiteralPath $pinFile -Force -ErrorAction SilentlyContinue
+          }
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          $secure = [Security.SecureString]::new()
+          foreach ($ch in $cfg.password.ToCharArray()) { $secure.AppendChar($ch) }
+          $secure.MakeReadOnly()
+          $credential = [pscredential]::new($cfg.user, $secure)
+          $state = Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock {
+            $volume = Get-BitLockerVolume -MountPoint "C:"
+            [pscustomobject]@{
+              ProtectionStatus = [string]$volume.ProtectionStatus
+              VolumeStatus = [string]$volume.VolumeStatus
+              TpmOnly = @($volume.KeyProtector | Where-Object { [string]$_.KeyProtectorType -eq "Tpm" }).Count
+              TpmPin = @($volume.KeyProtector | Where-Object { [string]$_.KeyProtectorType -match '^Tpm.*Pin$|^TpmPin$|^TpmAndPin$' }).Count
+              Recovery = @($volume.KeyProtector | Where-Object { [string]$_.KeyProtectorType -eq "RecoveryPassword" }).Count
+            }
+          }
+          if ($state.ProtectionStatus -ne "On") { throw "OS BitLocker protection is not on in startup PIN mode." }
+          if ($state.VolumeStatus -ne "FullyEncrypted") { throw "OS BitLocker is not fully encrypted in startup PIN mode." }
+          if ($state.TpmOnly -ne 0) { throw "Plain TPM protector is still present in startup PIN mode." }
+          if ($state.TpmPin -lt 1) { throw "TPM+PIN protector is missing in startup PIN mode." }
+          if ($state.Recovery -lt 1) { throw "Recovery protector is missing in startup PIN mode." }
 
       - name: Collect state
         if: always()
