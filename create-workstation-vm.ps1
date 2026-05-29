@@ -254,6 +254,7 @@ function InstallMedia($cfg, $baseDir, $windowsIso, $sshKey, $streaming) {
         } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $dir "streaming.json") -Encoding UTF8
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "bootstrap-windows.ps1") -Destination $dir -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "lib\session-policy.ps1") -Destination (Join-Path $dir "session-policy.ps1") -Force
     if ($sshKey) {
         Copy-Item -LiteralPath $sshKey.Public -Destination (Join-Path $dir "ssh_authorized_key.pub") -Force
     }

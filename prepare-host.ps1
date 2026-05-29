@@ -71,7 +71,7 @@ if ($members -notcontains $User.ToLowerInvariant()) {
 if ($restartNeeded) {
     "Host prepared. Restart Windows before creating the VM."
 } elseif ($groupChanged) {
-    "Host prepared. Sign out and back in, then use normal PowerShell."
+    "Host prepared. Restart Windows before creating the VM. A sign out and sign in is usually enough for group membership, but a restart is recommended."
 } else {
     "Host is ready. Use normal PowerShell to create the VM."
 }

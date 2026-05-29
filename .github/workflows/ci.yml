@@ -16,7 +16,7 @@ jobs:
       - name: Parse scripts and config
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "enable-gpu-pv.ps1", "pair-moonlight.ps1", "set-workstation-session-policy.ps1", "write-rdp-file.ps1", "lib/iso-writer.ps1", "vendor/Fido.ps1")) {
+          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "enable-gpu-pv.ps1", "pair-moonlight.ps1", "set-workstation-session-policy.ps1", "write-rdp-file.ps1", "lib/iso-writer.ps1", "lib/session-policy.ps1", "vendor/Fido.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null

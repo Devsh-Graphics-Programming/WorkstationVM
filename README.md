@@ -8,6 +8,7 @@ The script can download the Windows ISO automatically. You can also download the
 
 - Windows host with Hyper-V support. Hyper-V requires Windows 10/11 Professional, Enterprise or Education according to [Microsoft's Hyper-V setup docs](https://learn.microsoft.com/virtualization/hyper-v-on-windows/quick-start/enable-hyper-v).
 - Virtualization enabled in BIOS/UEFI. This is usually named Intel VT-x, Intel Virtualization Technology, AMD-V or SVM.
+- Windows PowerShell 5.1 or newer. PowerShell 7+ is recommended, but the scripts also support the stock Windows PowerShell 5.1 that ships with Windows.
 - Internet access for Windows ISO download, unless `windowsIsoPath` points to an existing local ISO.
 
 ## What It Does
@@ -58,11 +59,11 @@ This validates BIOS/UEFI virtualization setup, enables Hyper-V, installs the Win
 
 If virtualization is disabled in BIOS/UEFI, the script stops before changing the VM setup. Enable Intel VT-x, Intel Virtualization Technology, AMD-V or SVM in BIOS/UEFI, restart Windows, then run the prepare step again.
 
-**IMPORTANT: SIGN OUT OF WINDOWS AND SIGN BACK IN AFTER RUNNING `prepare-host.ps1` AS ADMINISTRATOR.**
+**IMPORTANT: RESTART WINDOWS AFTER RUNNING `prepare-host.ps1` AS ADMINISTRATOR.**
 
-Closing the Administrator PowerShell window is not enough. Windows only refreshes the current user's `Hyper-V Administrators` group membership on a new login session. If you skip the sign-out/sign-in step, the create script can fail later at `New-VHD` with a missing privileges error.
+Closing the Administrator PowerShell window is not enough. Windows only refreshes the current user's `Hyper-V Administrators` group membership on a new login session. A sign-out/sign-in is usually enough for that group refresh, but a full restart is the safest option and is required when Windows has just enabled Hyper-V features. If you skip this step, the create script can fail later at `New-VHD` with a missing privileges error.
 
-After signing back in, open a new PowerShell session **without Administrator privileges**.
+After restarting or signing back in, open a new PowerShell session **without Administrator privileges**.
 
 ## Run
 
