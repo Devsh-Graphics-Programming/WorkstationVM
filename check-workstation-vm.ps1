@@ -346,15 +346,40 @@ if ([bool]$cfg.sshEnabled) {
     if (-not $ssh) { throw "ssh.exe was not found on the host." }
 
     $ok = $false
+    $lastSshOutput = ""
     foreach ($ip in $ips) {
-        & $ssh.Source -i $key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ConnectTimeout=10 "$($cfg.user)@$ip" "echo hello" 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        $sshArgs = @(
+            "-i", $key,
+            "-o", "BatchMode=yes",
+            "-o", "IdentitiesOnly=yes",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=NUL",
+            "-o", "LogLevel=ERROR",
+            "-o", "ConnectTimeout=10",
+            "$($cfg.user)@$ip",
+            "echo hello"
+        )
+        $oldErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $sshOutput = @(& $ssh.Source @sshArgs 2>&1)
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldErrorActionPreference
+        }
+        if ($exitCode -eq 0) {
             Write-Host "SSH ready: $($cfg.user)@$ip"
             $ok = $true
             break
         }
+        $lastSshOutput = ($sshOutput | ForEach-Object { [string]$_ }) -join "`n"
     }
-    if (-not $ok) { throw "SSH key login failed." }
+    if (-not $ok) {
+        if (-not [string]::IsNullOrWhiteSpace($lastSshOutput)) {
+            throw "SSH key login failed. Last ssh output: $lastSshOutput"
+        }
+        throw "SSH key login failed."
+    }
 }
 
 if ([bool]$gpu.enabled) {
