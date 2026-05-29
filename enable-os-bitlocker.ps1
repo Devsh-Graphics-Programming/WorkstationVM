@@ -191,7 +191,9 @@ function EnableGuestOsBitLocker($cfg, $credential, $requireStartupPin, $startupP
 
         function RemoveProtectors($protectors) {
             foreach ($protector in @($protectors)) {
-                Remove-BitLockerKeyProtector -MountPoint $mountPoint -KeyProtectorId $protector.KeyProtectorId | Out-Null
+                $protectorId = [string]$protector.KeyProtectorId
+                if ([string]::IsNullOrWhiteSpace($protectorId)) { continue }
+                Remove-BitLockerKeyProtector -MountPoint $mountPoint -KeyProtectorId $protectorId | Out-Null
             }
         }
 
