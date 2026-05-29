@@ -179,6 +179,18 @@ $size = Get-PartitionSupportedSize -DriveLetter W
 Resize-Partition -DriveLetter W -Size $size.SizeMax
 ```
 
+## OS Disk BitLocker (OPTIONAL)
+
+The OS disk can also be encrypted with BitLocker as an extra at-rest protection layer for Windows profile data, browser cache, downloads, temp files and application state.
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass; .\enable-os-bitlocker.ps1 --config config\windows.json --recovery-key-path <secure-host-directory-or-file>
+```
+
+Run this from the host after the VM exists. PowerShell must be running as Administrator because the script may change Hyper-V VM security settings and DVD media state. The script configures vTPM-backed BitLocker for `C:` inside the VM, exports the numerical recovery key to the host path you provide, and is safe to run repeatedly. If vTPM is not enabled yet, the script shuts the VM down cleanly, enables the VM key protector and vTPM, starts the VM again, then continues.
+
+Keep the exported recovery key in a password manager. Do not store the only copy next to the VM disks. The OS disk unlocks automatically through vTPM during normal boot. The separate `W:` data disk still uses its own BitLocker password and remains the preferred place for customer secrets and files.
+
 ## Default Software
 
 The first-login bootstrap installs these tools inside the VM by default:

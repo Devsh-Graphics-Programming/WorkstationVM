@@ -20,7 +20,7 @@ jobs:
       - name: Parse scripts and config
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "enable-gpu-pv.ps1", "pair-moonlight.ps1", "set-workstation-session-policy.ps1", "write-rdp-file.ps1", "lib/iso-writer.ps1", "lib/session-policy.ps1", "vendor/Fido.ps1")) {
+          foreach ($file in @("prepare-host.ps1", "create-workstation-vm.ps1", "check-workstation-vm.ps1", "bootstrap-windows.ps1", "enable-gpu-pv.ps1", "configure-workstation-management.ps1", "enable-os-bitlocker.ps1", "pair-moonlight.ps1", "set-workstation-session-policy.ps1", "write-rdp-file.ps1", "lib/iso-writer.ps1", "lib/session-policy.ps1", "vendor/Fido.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
@@ -151,6 +151,19 @@ jobs:
       - name: SSH hello
         run: >
           $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json; $ip = @(Get-VMNetworkAdapter -VMName $cfg.vmName | Select-Object -ExpandProperty IPAddresses | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -notlike '169.254.*' -and $_ -ne '0.0.0.0' } | Select-Object -First 1)[0]; ssh -i (Join-Path $cfg.baseDir "ssh_key_ed25519.key") -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "$($cfg.user)@$ip" "echo hello"
+
+      - name: Configure private management access
+        run: .\configure-workstation-management.ps1 --config config/windows.json
+
+      - name: Enable OS BitLocker
+        run: |
+          $recoveryDir = Join-Path $env:RUNNER_TEMP "workstation-os-bitlocker-recovery"
+          .\enable-os-bitlocker.ps1 --config config/windows.json --recovery-key-path $recoveryDir
+          $cfg = Get-Content -Raw config/windows.json | ConvertFrom-Json
+          $recoveryFile = Join-Path $recoveryDir "$($cfg.vmName)-os-bitlocker-recovery-key.txt"
+          if (-not (Test-Path -LiteralPath $recoveryFile)) { throw "OS BitLocker recovery key file was not written." }
+          $metadata = Get-Item -LiteralPath $recoveryFile
+          if ($metadata.Length -le 0) { throw "OS BitLocker recovery key file is empty." }
 
       - name: Collect state
         if: always()
