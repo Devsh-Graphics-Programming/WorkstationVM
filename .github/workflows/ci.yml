@@ -172,7 +172,11 @@ jobs:
           foreach ($ch in $cfg.password.ToCharArray()) { $secure.AppendChar($ch) }
           $secure.MakeReadOnly()
           $credential = [pscredential]::new($cfg.user, $secure)
-          Stop-VM -Name $cfg.vmName -Shutdown
+          try {
+            Invoke-Command -VMName $cfg.vmName -Credential $credential -ScriptBlock { Stop-Computer -Force } -ErrorAction Stop
+          } catch {
+            Write-Host "Guest shutdown command ended with: $($_.Exception.Message)"
+          }
           $deadline = (Get-Date).AddMinutes(5)
           do {
             Start-Sleep -Seconds 3
