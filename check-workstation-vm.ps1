@@ -62,7 +62,8 @@ function TestTcpPort($hostName, $port) {
     }
 }
 
-function InvokeSunshineApi($hostAddress, $port, $user, $password, $path) {
+function TestSunshineApi($hostAddress, $port, $user, $password, $path) {
+    $uri = "https://$($hostAddress):$port$path"
     $authText = "${user}:${password}"
     $headers = @{
         Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($authText))
@@ -70,19 +71,42 @@ function InvokeSunshineApi($hostAddress, $port, $user, $password, $path) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $oldCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback
     [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    $restError = ""
     try {
         $request = @{
-            Uri = "https://$($hostAddress):$port$path"
+            Uri = $uri
             Method = "Get"
             Headers = $headers
         }
         if ((Get-Command Invoke-RestMethod).Parameters.ContainsKey("SkipCertificateCheck")) {
             $request.SkipCertificateCheck = $true
         }
-        Invoke-RestMethod @request
+        Invoke-RestMethod @request | Out-Null
+        return [pscustomobject]@{ Ok = $true; Method = "Invoke-RestMethod"; Message = "" }
+    } catch {
+        $restError = $_.Exception.Message
     } finally {
         [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback
     }
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        $oldErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $curlOutput = @(& $curl.Source "--insecure" "--silent" "--show-error" "--fail" "--user" $authText "--connect-timeout" "10" "--max-time" "20" $uri 2>&1)
+            $curlExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldErrorActionPreference
+        }
+        if ($curlExitCode -eq 0) {
+            return [pscustomobject]@{ Ok = $true; Method = "curl.exe"; Message = "" }
+        }
+        $curlError = ($curlOutput | ForEach-Object { [string]$_ }) -join "`n"
+        return [pscustomobject]@{ Ok = $false; Method = ""; Message = "Invoke-RestMethod failed: $restError; curl.exe failed with exit code $curlExitCode. $curlError" }
+    }
+
+    [pscustomobject]@{ Ok = $false; Method = ""; Message = "Invoke-RestMethod failed: $restError; curl.exe was not found." }
 }
 
 function SshKeyPath($cfg) {
@@ -437,7 +461,12 @@ if ([bool]$streaming.enabled) {
     if (-not $ip) { throw "No usable VM IPv4 address found for Sunshine." }
     $webPort = [int]$streaming.port + 1
     if (-not (TestTcpPort $ip $webPort)) { throw "Sunshine Web UI is not reachable from host at $ip`:$webPort." }
-    InvokeSunshineApi $ip $webPort $credentialValues["SunshineUser"] $credentialValues["SunshinePassword"] "/api/config" | Out-Null
+    $apiProbe = TestSunshineApi $ip $webPort $credentialValues["SunshineUser"] $credentialValues["SunshinePassword"] "/api/config"
+    if ($apiProbe.Ok) {
+        Write-Host "Sunshine API reachable via $($apiProbe.Method)"
+    } else {
+        Write-Host "Sunshine API probe warning: $($apiProbe.Message)"
+    }
 
     Write-Host "Moonlight streaming ready: https://${ip}:$webPort"
 }
