@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1130" height="640" viewBox="0 0 1130 640" role="img" aria-label="Private management subnet for Workstation VM">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f6f7e"/>
+    </marker>
+    <marker id="vpnArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3f8a55"/>
+    </marker>
+    <marker id="redArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a5473a"/>
+    </marker>
+    <style>
+      text { font-family: Segoe UI, Arial, sans-serif; fill: #172026; }
+      .canvas { fill: #ffffff; }
+      .heading { font-size: 24px; font-weight: 700; fill: #172026; }
+      .subheading { font-size: 13px; fill: #315c66; }
+      .box { fill: #f7fafb; stroke: #2f6f7e; stroke-width: 2; }
+      .host { fill: #fbfdfd; }
+      .vm { fill: #e9f5f7; }
+      .vpn { fill: #f2fbf4; stroke: #62a878; stroke-width: 2; }
+      .switch { fill: #ffffff; stroke: #6bb6c5; stroke-width: 1.8; }
+      .service { fill: #ffffff; stroke: #b7dbe3; stroke-width: 1.2; }
+      .deny { fill: #fff7f4; stroke: #d78f82; stroke-width: 1.4; }
+      .noteBg { fill: #ffffff; stroke: #d7e9ed; stroke-width: 1; }
+      .title { font-size: 22px; font-weight: 700; }
+      .line { font-size: 14px; }
+      .small { font-size: 13px; fill: #315c66; }
+      .tiny { font-size: 12px; fill: #315c66; }
+      .good { fill: #1f6f4a; font-weight: 700; }
+      .warn { fill: #7b4b00; font-weight: 700; }
+      .bad { fill: #a5473a; font-weight: 700; }
+      .label { font-size: 12px; font-weight: 700; fill: #315c66; }
+      .pill { fill: #ffffff; stroke: #b7dbe3; stroke-width: 1; }
+      .arrow { stroke: #2f6f7e; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .vpnLine { stroke: #3f8a55; stroke-width: 2.5; fill: none; }
+      .vpnArrow { stroke: #3f8a55; stroke-width: 2.5; fill: none; marker-end: url(#vpnArrow); }
+      .blocked { stroke: #a5473a; stroke-width: 2; stroke-dasharray: 8 7; fill: none; }
+      .blockedEnd { stroke: #a5473a; stroke-width: 2; stroke-dasharray: 8 7; fill: none; marker-end: url(#redArrow); }
+      .divider { stroke: #d7e9ed; stroke-width: 1.2; }
+      .dash { stroke: #6bb6c5; stroke-width: 1.4; stroke-dasharray: 8 7; fill: none; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1130" height="640" class="canvas"/>
+  <text x="565" y="38" text-anchor="middle" class="heading">Private Management Subnet</text>
+  <text x="565" y="62" text-anchor="middle" class="subheading">Host-to-VM services stay reachable while the customer VPN remains isolated inside the VM.</text>
+
+  <rect x="44" y="96" width="286" height="250" rx="10" class="box host"/>
+  <text x="76" y="136" class="title">Host PC</text>
+  <text x="76" y="170" class="line">Your editor, browser and tools</text>
+  <text x="76" y="199" class="good">No customer VPN route</text>
+  <text x="76" y="227" class="good">No NAT into customer network</text>
+  <line x1="76" y1="248" x2="298" y2="248" class="divider"/>
+  <text x="76" y="277" class="line">Management IP</text>
+  <rect x="76" y="292" width="156" height="34" rx="8" class="service"/>
+  <text x="154" y="314" text-anchor="middle" class="label">192.168.250.1</text>
+
+  <rect x="422" y="96" width="286" height="250" rx="10" class="box vm"/>
+  <text x="454" y="136" class="title">Workstation VM</text>
+  <text x="454" y="170" class="line">Customer VPN runs here</text>
+  <text x="454" y="199" class="line">RDP, SSH and Moonlight server</text>
+  <text x="454" y="227" class="good">Not a router back to host</text>
+  <line x1="454" y1="248" x2="676" y2="248" class="divider"/>
+  <text x="454" y="277" class="line">Management IP</text>
+  <rect x="454" y="292" width="156" height="34" rx="8" class="service"/>
+  <text x="532" y="314" text-anchor="middle" class="label">192.168.250.2</text>
+  <rect x="623" y="291" width="58" height="36" rx="8" class="service"/>
+  <text x="652" y="306" text-anchor="middle" class="tiny">scoped</text>
+  <text x="652" y="321" text-anchor="middle" class="tiny">rules</text>
+
+  <rect x="800" y="96" width="286" height="250" rx="10" class="box vpn"/>
+  <text x="832" y="136" class="title">Customer VPN</text>
+  <text x="832" y="170" class="line">Target networks and services</text>
+  <text x="832" y="199" class="line">No direct host route</text>
+  <text x="832" y="227" class="warn">Full tunnel is inside VM</text>
+  <line x1="832" y1="248" x2="1054" y2="248" class="divider"/>
+  <rect x="832" y="292" width="180" height="34" rx="8" class="service"/>
+  <text x="922" y="314" text-anchor="middle" class="label">Target subnet</text>
+
+  <line x1="232" y1="309" x2="422" y2="309" class="arrow"/>
+  <rect x="286" y="275" width="84" height="26" rx="7" class="pill"/>
+  <text x="328" y="293" text-anchor="middle" class="label">private link</text>
+
+  <path d="M 565 96 L 565 82 L 708 82" class="vpnLine"/>
+  <path d="M 802 82 L 943 82 L 943 96" class="vpnArrow"/>
+  <rect x="708" y="69" width="94" height="26" rx="7" class="pill"/>
+  <text x="755" y="87" text-anchor="middle" class="label">VPN tunnel</text>
+
+  <rect x="70" y="376" width="990" height="146" rx="12" class="dash"/>
+  <rect x="342" y="404" width="446" height="78" rx="12" class="switch"/>
+  <text x="565" y="430" text-anchor="middle" class="title">Internal Hyper-V switch</text>
+  <text x="565" y="455" text-anchor="middle" class="small">192.168.250.0/24, no gateway, no DNS, no NAT, no IP forwarding</text>
+  <text x="565" y="474" text-anchor="middle" class="small">Scoped service access: RDP, SSH and Moonlight/Sunshine</text>
+
+  <path d="M 154 326 L 154 386" class="arrow"/>
+  <path d="M 532 326 L 532 386" class="arrow"/>
+  <rect x="90" y="404" width="204" height="58" rx="8" class="noteBg"/>
+  <text x="192" y="427" text-anchor="middle" class="small">Host can open only</text>
+  <text x="192" y="446" text-anchor="middle" class="small">selected VM services</text>
+  <rect x="836" y="404" width="204" height="58" rx="8" class="noteBg"/>
+  <text x="938" y="427" text-anchor="middle" class="small">Customer VPN traffic</text>
+  <text x="938" y="446" text-anchor="middle" class="small">stays inside the VM</text>
+
+  <path d="M 60 560 L 470 560" class="blocked"/>
+  <path d="M 660 560 L 1070 560" class="blockedEnd"/>
+  <rect x="470" y="526" width="190" height="32" rx="8" class="deny"/>
+  <text x="565" y="547" text-anchor="middle" class="bad">no host route to VPN</text>
+  <path d="M 60 346 L 60 560" class="blocked"/>
+  <path d="M 1070 346 L 1070 560" class="blocked"/>
+</svg>

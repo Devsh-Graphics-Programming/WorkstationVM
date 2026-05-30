@@ -335,6 +335,8 @@ Run this post-script from PowerShell **as Administrator** on the host. It is saf
 
 The script creates an internal Hyper-V switch, attaches a second VM network adapter and configures a private host-to-VM subnet.
 
+![Private management subnet](misc/private-management-subnet.svg)
+
 ```text
 Host 192.168.250.1/24
 VM   192.168.250.2/24
